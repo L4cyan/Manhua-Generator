@@ -1,0 +1,14 @@
+# Core pipeline. Deliberately light: no torch here, because ComfyUI already
+# ships its own and the engine only talks to it over HTTP.
+pydantic>=2.7
+pyyaml>=6.0
+typer>=0.12
+rich>=13.7
+pillow>=10.3
+numpy>=1.26
+requests>=2.32
+websocket-client>=1.8
+fastapi>=0.111
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+anthropic>=0.40

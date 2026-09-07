@@ -1,0 +1,36 @@
+series: The Quiet Cultivator
+style: config/style.yaml
+bible: config/characters.yaml
+out_dir: out
+
+# ---------- WEBTOON CANVAS ----------
+# WEBTOON/Tapas long-strip delivery spec.
+canvas:
+  width: 800          # final delivered pixel width
+  gutter: 28          # vertical space between panels
+  margin: 0           # side margin (0 = panels run full width)
+  background: "#FFFFFF"
+  slice_max_height: 1280   # exported chunk height cap; slices snap to gutters
+
+# ---------- LETTERING ----------
+lettering:
+  font: assets/fonts/dialogue.ttf
+  font_size: 26
+  line_spacing: 1.25
+  balloon_fill: "#FFFFFF"
+  balloon_stroke: "#2A1F2E"
+  balloon_stroke_width: 3
+  padding: 22
+
+# ---------- QA GATE ----------
+qa:
+  enabled: true
+  # Cosine similarity floor against the character's turnaround sheet.
+  # Below this, the panel is re-rendered with a new seed.
+  drift_threshold: 0.78
+  max_rerolls: 3
+
+# ---------- RENDER BACKEND ----------
+backend:
+  kind: comfy               # comfy | mock
+  host: 127.0.0.1:8188

@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+out/
+models/
+*.safetensors
+*.ckpt
+*.pt
+assets/fonts/*.ttf
+assets/fonts/*.otf
+.cache/
+*.egg-info/
+workspace/
+
+# Live configs - the .example.yaml versions are the tracked ones
+config/characters.yaml
+config/project.yaml
+
+# Ad-hoc debugging scripts
+scripts/

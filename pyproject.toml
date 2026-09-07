@@ -1,0 +1,19 @@
+[project]
+name = "manhua-generator"
+version = "0.1.0"
+description = "Long-strip manhua generation with style, character, and composition locks"
+requires-python = ">=3.10"
+dynamic = ["dependencies"]
+
+[project.scripts]
+manhua = "manhua.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["manhua*"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

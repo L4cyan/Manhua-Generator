@@ -1,0 +1,6 @@
+# Optional: the CLIP-based character drift gate (manhua/qa/drift.py).
+# ~2GB of wheels. Skip unless you want automatic reroll of off-model panels.
+# CPU-only install:
+#   pip install -r requirements-qa.txt --index-url https://download.pytorch.org/whl/cpu
+torch>=2.3
+open-clip-torch>=2.24

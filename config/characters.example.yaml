@@ -1,0 +1,41 @@
+# ============================================================
+# CHARACTER BIBLE  --  identity lock.
+#
+# `appearance` is emitted verbatim into every prompt the character
+# appears in. Write it once, then never edit it mid-series: changing
+# it retroactively desyncs new panels from old ones.
+#
+# The text description gets you maybe 70% consistency. The remaining
+# 30% is the `lora` field -- see `manhua bible train`.
+# ============================================================
+
+characters:
+  lin_yao:
+    name: Lin Yao
+    sex: male
+    appearance: >-
+      young man, long dark brown hair in a high ponytail, loose side bangs,
+      sharp angular v-shaped jawline, narrow amber eyes, thin arched eyebrows,
+      pale skin, slender athletic build, single small jade earring
+    default_outfit: >-
+      blue and white hanfu robe, wide sleeves, layered collar,
+      green sash belt, white inner lining
+    lora: null            # e.g. lin_yao_v3.safetensors, after training
+    lora_weight: 0.8
+    trigger: null         # e.g. linyao1n
+    sheet_dir: out/bible/lin_yao
+
+  elder_shen:
+    name: Elder Shen
+    sex: female
+    appearance: >-
+      mature woman, very long silver white wavy hair, red forehead marking,
+      sharp violet eyes, elegant angular features, tall stately build,
+      gold hairpin crown, gold drop earrings
+    default_outfit: >-
+      lavender and white immortal robes, wide flowing sleeves,
+      gold chain ornaments, pink silk shawl
+    lora: null
+    lora_weight: 0.8
+    trigger: null
+    sheet_dir: out/bible/elder_shen

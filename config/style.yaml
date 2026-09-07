@@ -1,0 +1,112 @@
+# ============================================================
+# STYLE LOCK  --  the single source of truth for the art style.
+# Every panel in every episode inherits this verbatim.
+# Changing ANY field here changes the look of the whole series,
+# so treat it as frozen once you start an episode.
+# ============================================================
+
+name: xianxia_premium_webtoon
+version: 1
+
+# ---------- PROMPT ORDERING ----------
+# SDXL's CLIP encodes in 77-token chunks and weights early tokens hardest.
+# The full style block below is ~200 tokens; if it all sits in front, the
+# character identity lands in chunk 3 and drifts. So the style is split:
+# a short LEAD that must be front-loaded, and a BODY that trails the panel
+# content. The style LoRA carries the look regardless of token position,
+# which is what makes the split safe.
+
+# Front-loaded. Keep this SHORT -- under ~20 tokens.
+style_lead: >-
+  masterpiece, best quality, modern manhua art style, premium webtoon aesthetic,
+  2D digital comic illustration
+
+# ---------- SETTING REGISTER ----------
+# Genre words are extremely strong in the front-loaded lead -- strong enough to
+# put a modern professor in cultivation robes. An isekai has BOTH registers, so
+# the genre clause is selected per panel via `Panel.register` rather than being
+# welded on permanently.
+registers:
+  cultivation: xianxia wuxia eastern fantasy cultivation genre
+  modern: modern day contemporary setting, real world
+  neutral: ""
+
+# Trails the panel content. The bulk of the aesthetic description.
+style_body: >-
+  high resolution,
+  crisp delicate line art, varied line weight, sharp angular geometry,
+  soft dark brown or deep purple outlines instead of pure black,
+  advanced clean cel-shading combined with soft airbrush gradients,
+  hard-edged distinct shadow mapping contrasting with smooth blended skin tones,
+  ethereal atmospheric lighting, prominent rim lighting,
+  highly stylized sharp angular V-shaped jawlines,
+  narrow piercing eyes with highly detailed vibrant irises,
+  prominent stylized eyelashes,
+  glossy banded specular highlights on hair, flowing gravity-defying movement,
+  sharp structural folds on clothing fabric, dynamic composition,
+  high contrast, vibrant color rendering, dramatic and ethereal vibe
+
+# ---------- SUPERNATURAL FX ----------
+# Applied ONLY to panels that declare `fx` (a qi aura, sword glow, a tribulation).
+#
+# These two clauses were originally inline in style_body, which meant every
+# panel inherited them -- including a university lecture hall, which then
+# rendered wreathed in purple qi fire. Gating them on `fx` keeps the look
+# for supernatural beats and off the mundane ones.
+#
+# To restore the old always-on behaviour, move these back into style_body.
+style_fx: >-
+  glowing magical qi aura, floating light particles
+
+# Appended after panel content (quality tail).
+positive_suffix: >-
+  official art, extremely detailed, sharp focus, professional colouring
+
+negative: >-
+  worst quality, low quality, normal quality, lowres, jpeg artifacts, blurry,
+  sketch, unfinished, monochrome, greyscale, 3d render, photorealistic, photo,
+  western comic style, american cartoon, chibi, deformed, disfigured,
+  bad anatomy, bad hands, extra fingers, fused fingers, missing fingers,
+  extra limbs, malformed limbs, mutated, long neck, cross-eyed,
+  text, watermark, signature, username, artist name, logo, speech bubble,
+  border, frame, panel border, letterbox, cropped head, out of frame
+
+# ---------- RENDER LOCK ----------
+# Frozen sampler settings. Identical across every panel so the
+# rendering "hand" never changes. Do not tune these per panel.
+render:
+  # Keep this a CLEAN Illustrious base, not a baked manhwa merge.
+  # Character LoRAs are trained against base Illustrious weights; a heavy
+  # style merge has drifted weights and will fight them, degrading identity
+  # exactly where consistency matters most. Style goes in as a LoRA below,
+  # where it stays a tunable dial instead of a checkpoint swap.
+  checkpoint: Illustrious-XL-v1.1.safetensors
+  sampler: dpmpp_2m_sde
+  scheduler: karras
+  steps: 30          # Illustrious sweet spot is 30-50
+  cfg: 4.5           # Illustrious prefers 3.5-4.5; SDXL-default 7+ oversaturates
+  clip_skip: 2
+
+  # Manhwa/manhua style LoRA. Loaded BEFORE character LoRAs (see render/comfy.py)
+  # so identity weights land last and win any conflict.
+  #   0.4-0.5 subtle · 0.6-0.7 balanced · 0.8+ heavy stylisation
+  style_lora: manhwa_webtoon_style_il.safetensors
+  style_lora_weight: 0.65
+
+# ---------- HIRES FIX ----------
+# 6GB-VRAM friendly. Raise denoise for more detail, lower for more fidelity.
+hires:
+  enabled: true
+  scale: 1.5
+  denoise: 0.4
+  steps: 12
+
+# ---------- PANEL GEOMETRY ----------
+# SDXL-native resolution buckets. Rendered at these sizes, then
+# downscaled to the webtoon canvas width during composition.
+aspects:
+  tall:       [832, 1216]    # standard character shot
+  square:     [1024, 1024]   # reaction / dialogue beat
+  wide:       [1216, 832]    # scenery, two-shot
+  banner:     [1344, 768]    # cinematic sting
+  full_bleed: [832, 1216]    # edge-to-edge, no gutter

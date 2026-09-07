@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manhua Studio</title>
+<style>
+  :root{
+    --bg:#141019; --sidebar:#191320; --panel:#1f1929; --edge:#2f2839; --edge-hi:#463c56;
+    --ink:#ece7f2; --dim:#9b90ab; --faint:#6b6178;
+    --accent:#c9a227; --accent-2:#7fd4ff; --danger:#e0616e; --ok:#5fc98a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);height:100vh;overflow:hidden;
+       font:14px/1.5 "Segoe UI",system-ui,sans-serif;display:flex}
+  button{background:var(--panel);color:var(--ink);border:1px solid var(--edge-hi);border-radius:7px;
+         padding:7px 12px;cursor:pointer;font:inherit;font-size:13px}
+  button:hover:not(:disabled){border-color:var(--accent);color:#fff}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:var(--accent);color:#1a1408;border-color:var(--accent);font-weight:600}
+  button.ghost{background:transparent;border-color:transparent}
+  button.ghost:hover{border-color:var(--edge-hi)}
+  input,textarea,select{width:100%;background:#100d15;color:var(--ink);border:1px solid var(--edge-hi);
+        border-radius:7px;padding:8px 10px;font:inherit;font-size:13px}
+  input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent)}
+  label{display:block;font-size:11px;color:var(--dim);margin:12px 0 4px;
+        text-transform:uppercase;letter-spacing:.6px}
+  .hint{font-size:11px;color:var(--faint);margin-top:4px;line-height:1.45}
+
+  /* ---------- sidebar ---------- */
+  #side{width:270px;flex-shrink:0;background:var(--sidebar);border-right:1px solid var(--edge);
+        display:flex;flex-direction:column;overflow:hidden}
+  #side h2{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.8px;
+           margin:16px 14px 8px;display:flex;align-items:center;justify-content:space-between}
+  #side h2 button{padding:2px 7px;font-size:15px;line-height:1;border-radius:5px}
+  .brand{padding:14px;border-bottom:1px solid var(--edge);font-weight:600;letter-spacing:.3px}
+  .brand small{display:block;color:var(--faint);font-weight:400;font-size:11px;margin-top:2px}
+  .list{overflow-y:auto;padding:0 8px}
+  .item{padding:8px 10px;border-radius:7px;cursor:pointer;font-size:13px;
+        display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+  .item:hover{background:#241d2f}
+  .item.on{background:#2b2238;color:#fff;box-shadow:inset 2px 0 0 var(--accent)}
+  .item small{color:var(--faint);font-size:11px;flex-shrink:0}
+  .item .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #chapters{flex:1;min-height:0}
+  .foot{padding:10px 14px;border-top:1px solid var(--edge);font-size:11px;color:var(--faint);
+        display:flex;align-items:center;gap:7px}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--faint)}
+  .dot.on{background:var(--ok)} .dot.off{background:var(--danger)}
+
+  /* ---------- main ---------- */
+  #main{flex:1;display:flex;flex-direction:column;min-width:0}
+  #bar{display:flex;align-items:center;gap:10px;padding:11px 18px;
+       border-bottom:1px solid var(--edge);background:#191320}
+  #bar .ttl{font-weight:600}
+  #bar .meta{color:var(--dim);font-size:12px}
+  .grow{flex:1}
+
+  #scroll{flex:1;overflow-y:auto;padding:22px 0 24px}
+  #strip{max-width:800px;margin:0 auto;display:flex;flex-direction:column}
+  .panel{position:relative;background:var(--panel);border:1px solid transparent}
+  .panel:hover{border-color:var(--edge-hi)}
+  .panel.locked{border-color:var(--accent)}
+  .panel img{display:block;width:100%;height:auto}
+  .ph{aspect-ratio:832/1216;display:flex;flex-direction:column;justify-content:center;gap:9px;
+      padding:26px;border:1px dashed var(--edge-hi);color:var(--dim);font-size:12px}
+  .ph.err{border-color:var(--danger);color:var(--danger)}
+  .ph .shot{color:var(--accent-2);font-weight:600;text-transform:uppercase;
+            letter-spacing:.6px;font-size:11px}
+  .ph .cast{color:var(--accent)}
+  .gutter{background:#fff}
+  .bar2{position:absolute;top:8px;right:8px;display:none;gap:4px;background:#12101ae8;
+        padding:5px;border-radius:8px;border:1px solid var(--edge-hi)}
+  .panel:hover .bar2{display:flex}
+  .bar2 button{padding:4px 9px;font-size:12px;border-radius:5px}
+  .tag{position:absolute;top:8px;left:8px;background:#12101ae8;border:1px solid var(--edge-hi);
+       padding:3px 8px;border-radius:6px;font-size:11px;color:var(--dim);
+       font-family:ui-monospace,monospace}
+  .panel.busy::after{content:"";position:absolute;inset:0;pointer-events:none;
+       background:repeating-linear-gradient(45deg,#0000 0 10px,#c9a22726 10px 20px);
+       animation:slide 1s linear infinite}
+  @keyframes slide{to{background-position:28px 0}}
+
+  #dock{border-top:1px solid var(--edge);background:#191320f5;padding:12px 18px}
+  #dock .row{max-width:900px;margin:0 auto;display:flex;gap:10px;align-items:flex-start}
+  #dock textarea{flex:1;min-height:64px;resize:vertical}
+  .col{display:flex;flex-direction:column;gap:6px;flex-shrink:0}
+  #status{max-width:900px;margin:8px auto 0;font-size:12px;color:var(--dim);
+          display:flex;align-items:center;gap:10px;min-height:18px}
+  .prog{flex:1;height:3px;background:var(--edge);border-radius:2px;overflow:hidden}
+  .prog i{display:block;height:100%;background:var(--accent);width:0;transition:width .3s}
+
+  .empty{text-align:center;color:var(--faint);padding:90px 24px;line-height:1.7}
+  dialog{background:var(--panel);color:var(--ink);border:1px solid var(--edge-hi);border-radius:13px;
+         padding:22px;max-width:580px;width:92vw}
+  dialog::backdrop{background:#000a}
+  dialog h3{margin:0 0 2px;font-size:16px}
+  dialog .acts{display:flex;gap:8px;margin-top:20px;justify-content:flex-end}
+  .styleopt{border:1px solid var(--edge-hi);border-radius:8px;padding:10px;cursor:pointer;margin-top:6px}
+  .styleopt.on{border-color:var(--accent);background:#2a2135}
+  .styleopt b{font-size:13px} .styleopt div{color:var(--faint);font-size:11px;margin-top:3px}
+  textarea.mono{font-family:ui-monospace,Consolas,monospace;font-size:12px;min-height:300px}
+</style>
+</head>
+<body>
+
+<div id="side">
+  <div class="brand">Manhua Studio<small id="wsInfo">workspace</small></div>
+  <h2>Projects <button class="ghost" id="btnNewProject" title="New project">+</button></h2>
+  <div class="list" id="projects"></div>
+  <h2>Chapters <button class="ghost" id="btnNewChapter" title="New chapter">+</button></h2>
+  <div class="list" id="chapters"></div>
+  <div class="foot"><span class="dot" id="health"></span><span id="healthTxt">…</span></div>
+</div>
+
+<div id="main">
+  <div id="bar">
+    <span class="ttl" id="chTitle">—</span>
+    <span class="meta" id="chMeta"></span>
+    <span class="grow"></span>
+    <button class="ghost" id="btnBible">Characters</button>
+    <button class="ghost" id="btnSettings">Style</button>
+    <button id="btnExport">Export</button>
+  </div>
+
+  <div id="scroll"><div id="strip"></div></div>
+
+  <div id="dock">
+    <div class="row">
+      <textarea id="story" placeholder="Paste the next scene of prose.
+It becomes panels you can review as text — before anything renders."></textarea>
+      <div class="col">
+        <button class="primary" id="btnBreak">Break down →</button>
+        <button id="btnRender">Render beat</button>
+      </div>
+    </div>
+    <div id="status"><span id="statusTxt">ready</span><span class="prog"><i id="progBar"></i></span></div>
+  </div>
+</div>
+
+<!-- ---------------- dialogs ---------------- -->
+<dialog id="dlgProject">
+  <h3>New project</h3>
+  <div class="hint">One project per story. Chapters live inside it and share the cast and art style.</div>
+  <label>Title</label><input id="pName" placeholder="Psionic Cultivation">
+  <label>Description</label><textarea id="pDesc" rows="2" placeholder="One line about the story."></textarea>
+  <label>Art style</label><div id="pStyles"></div>
+  <label>Extra style prompt (optional)</label>
+  <textarea id="pAdd" rows="2" placeholder="Added to every panel in this project, on top of the style above."></textarea>
+  <div class="hint">Appended at the end so it can never push character identity out of the prompt's strongest region.</div>
+  <div class="acts"><button class="ghost" onclick="dlgProject.close()">Cancel</button>
+    <button class="primary" id="pCreate">Create project</button></div>
+</dialog>
+
+<dialog id="dlgSettings">
+  <h3>Style</h3>
+  <div class="hint">Changing the style affects panels rendered from now on. Already-rendered panels keep their look until you reroll them.</div>
+  <label>Art style</label><div id="sStyles"></div>
+  <label>Extra style prompt</label><textarea id="sAdd" rows="3"></textarea>
+  <div class="acts"><button class="ghost" onclick="dlgSettings.close()">Cancel</button>
+    <button class="primary" id="sSave">Save</button></div>
+</dialog>
+
+<dialog id="dlgBible">
+  <h3>Character bible</h3>
+  <div class="hint">`appearance` is the identity lock, injected into every prompt this character appears in. Write it once; editing it mid-story desyncs new panels from old ones.</div>
+  <textarea id="bYaml" class="mono" spellcheck="false"></textarea>
+  <div class="acts"><button class="ghost" onclick="dlgBible.close()">Cancel</button>
+    <button class="primary" id="bSave">Save bible</button></div>
+</dialog>
+
+<dialog id="dlgPanel">
+  <h3>Edit panel <span id="edId" style="color:var(--dim);font-weight:400;font-size:13px"></span></h3>
+  <label>Shot</label><select id="edShot"></select>
+  <label>Aspect</label><select id="edAspect"></select>
+  <label>Action</label><textarea id="edAction" rows="2"></textarea>
+  <label>Setting</label><textarea id="edSetting" rows="2"></textarea>
+  <label>Lighting</label><input id="edLighting">
+  <label>Camera</label><input id="edCamera">
+  <label>FX (comma separated)</label><input id="edFx">
+  <div class="acts"><button class="ghost" onclick="dlgPanel.close()">Cancel</button>
+    <button class="primary" id="edSave">Save &amp; re-render</button></div>
+</dialog>
+
+<script>
+const SHOTS=["establishing","wide","full","medium","close","extreme_close","over_shoulder","pov","insert","reaction"];
+const ASPECTS=["tall","square","wide","banner","full_bleed"];
+const $=s=>document.querySelector(s);
+
+const api=async(p,o={})=>{
+  const r=await fetch("/api"+p,{headers:{"Content-Type":"application/json"},...o});
+  if(!r.ok) throw new Error((await r.text()).slice(0,300));
+  return r.status===204?null:r.json();
+};
+
+let styles=[], projects=[], proj=null, chapter=null;
+
+const setStatus=(m,f)=>{$("#statusTxt").textContent=m;$("#progBar").style.width=f==null?"0%":(f*100).toFixed(0)+"%";};
+
+// ---------------------------------------------------------------- sidebar
+
+function drawSidebar(){
+  const pl=$("#projects"); pl.innerHTML="";
+  if(!projects.length) pl.innerHTML='<div class="hint" style="padding:6px 10px">No projects yet — hit + above.</div>';
+  projects.forEach(p=>{
+    const d=document.createElement("div");
+    d.className="item"+(proj&&p.id===proj.id?" on":"");
+    d.innerHTML=`<span class="nm">${esc(p.name)}</span><small>${p.chapters.length} ch</small>`;
+    d.title=p.description||p.name;
+    d.onclick=()=>openProject(p.id);
+    pl.append(d);
+  });
+
+  const cl=$("#chapters"); cl.innerHTML="";
+  if(!proj){cl.innerHTML='<div class="hint" style="padding:6px 10px">Pick a project.</div>';return;}
+  proj.chapters.forEach(c=>{
+    const d=document.createElement("div");
+    d.className="item"+(chapter&&c.number===chapter.number?" on":"");
+    d.innerHTML=`<span class="nm">${esc(c.title||("Chapter "+c.number))}</span><small>${c.rendered}/${c.panels}</small>`;
+    d.onclick=()=>openChapter(c.number);
+    d.ondblclick=async()=>{
+      const t=prompt("Chapter name:",c.title); if(t==null)return;
+      await api(`/projects/${proj.id}/chapters/${c.number}`,{method:"PATCH",body:JSON.stringify({title:t})});
+      await refreshProject();
+    };
+    cl.append(d);
+  });
+}
+
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+// ---------------------------------------------------------------- strip
+
+function panelNode(p){
+  const el=document.createElement("div");
+  el.className="panel"+(p.locked?" locked":"");
+  el.dataset.id=p.id;
+
+  if(p.rendered){
+    const i=document.createElement("img");
+    i.src=`/api/projects/${proj.id}/chapters/${chapter.number}/panels/${p.id}/image?v=${Date.now()}`;
+    i.loading="lazy"; el.append(i);
+  }else{
+    const ph=document.createElement("div");
+    ph.className="ph"+(p.error?" err":"");
+    ph.innerHTML=`<div class="shot">${p.shot.replace(/_/g," ")} · ${p.aspect}</div>`;
+    const b=document.createElement("div");
+    b.textContent=p.error?("⚠ "+p.error)
+      :[p.action,p.setting,p.lighting].filter(Boolean).join(" — ")||"(no description)";
+    ph.append(b);
+    if(p.characters?.length){
+      const c=document.createElement("div"); c.className="cast";
+      c.textContent="▸ "+p.characters.map(x=>x.id).join(", "); ph.append(c);
+    }
+    if(p.dialogue?.length){
+      const d=document.createElement("div"); d.style.color="var(--faint)";
+      d.textContent=p.dialogue.map(x=>`“${x.text}”`).join("  "); ph.append(d);
+    }
+    el.append(ph);
+  }
+
+  const tag=document.createElement("div"); tag.className="tag";
+  tag.textContent=`b${p.beat} · ${p.id.split("_").pop()}`+(p.seed!=null?` · ${p.seed}`:"");
+  el.append(tag);
+
+  const bar=document.createElement("div"); bar.className="bar2";
+  bar.append(
+    mk(p.rendered?"↻":"▶",p.rendered?"Reroll (new seed)":"Render",()=>renderPanel(p.id,p.rendered)),
+    mk("✎","Edit prompt",()=>openPanel(p)),
+    mk(p.locked?"🔒":"🔓",p.locked?"Unlock":"Lock — never re-render",()=>toggleLock(p)),
+    mk("✕","Delete",()=>delPanel(p.id)),
+  );
+  el.append(bar);
+  return el;
+}
+function mk(t,title,fn){const b=document.createElement("button");b.textContent=t;b.title=title;
+  b.onclick=e=>{e.stopPropagation();fn();};return b;}
+
+function drawStrip(){
+  const s=$("#strip"); s.innerHTML="";
+  if(!chapter){s.innerHTML='<div class="empty">Create or pick a project to start.</div>';return;}
+  if(!chapter.panels.length){
+    s.innerHTML='<div class="empty">This chapter is empty.<br>Paste a scene below and hit <b>Break down</b>.</div>';
+    return;
+  }
+  const g=chapter.canvas?.gutter??28, bgc=chapter.canvas?.background??"#fff";
+  chapter.panels.forEach((p,i)=>{
+    s.append(panelNode(p));
+    const next=chapter.panels[i+1];
+    if(next && next.aspect!=="full_bleed"){
+      const d=document.createElement("div"); d.className="gutter";
+      d.style.height=g+"px"; d.style.background=bgc; s.append(d);
+    }
+  });
+}
+
+function drawHeader(){
+  if(!chapter){$("#chTitle").textContent="—";$("#chMeta").textContent="";return;}
+  $("#chTitle").textContent=chapter.title||`Chapter ${chapter.number}`;
+  const done=chapter.panels.filter(p=>p.rendered).length;
+  const beats=new Set(chapter.panels.map(p=>p.beat)).size;
+  $("#chMeta").textContent=`${proj.name} · ${chapter.panels.length} panels · ${beats} beats · ${done} rendered`;
+}
+
+// ---------------------------------------------------------------- load
+
+async function refreshProjects(){projects=await api("/projects");drawSidebar();}
+async function refreshProject(){
+  if(!proj)return;
+  proj=await api("/projects/"+proj.id);
+  drawSidebar();
+}
+async function openProject(pid){
+  proj=await api("/projects/"+pid);
+  chapter=null;
+  const first=proj.chapters[0];
+  if(first) await openChapter(first.number); else {drawSidebar();drawStrip();drawHeader();}
+}
+async function openChapter(n){
+  chapter=await api(`/projects/${proj.id}/chapters/${n}`);
+  drawSidebar();drawStrip();drawHeader();
+}
+
+// ---------------------------------------------------------------- actions
+
+async function pollJob(id,label){
+  for(;;){
+    const j=await api("/jobs/"+id);
+    if(j.state==="error"){setStatus("✕ "+j.error,null);return false;}
+    if(j.state==="ok"){setStatus(label+" done",1);return true;}
+    setStatus(`${label}… ${j.detail||""} (${j.done}/${j.total})`, j.total?j.done/j.total:0);
+    await new Promise(r=>setTimeout(r,900));
+  }
+}
+const base=()=>`/projects/${proj.id}/chapters/${chapter.number}`;
+
+async function renderPanel(id,reroll){
+  document.querySelector(`.panel[data-id="${id}"]`)?.classList.add("busy");
+  try{
+    const j=await api(`${base()}/panels/${id}/render?reroll=${!!reroll}`,{method:"POST"});
+    await pollJob(j.id,reroll?"Reroll":"Render");
+  }catch(e){setStatus("✕ "+e.message,null);}
+  await openChapter(chapter.number); await refreshProject();
+}
+async function renderBeat(){
+  const pend=chapter.panels.filter(p=>!p.rendered&&!p.locked);
+  if(!pend.length){setStatus("nothing pending — all panels rendered or locked");return;}
+  const beat=Math.min(...pend.map(p=>p.beat));
+  try{
+    const j=await api(`${base()}/beats/${beat}/render`,{method:"POST"});
+    await pollJob(j.id,`Beat ${beat}`);
+  }catch(e){setStatus("✕ "+e.message,null);}
+  await openChapter(chapter.number); await refreshProject();
+}
+async function toggleLock(p){
+  await api(`${base()}/panels/${p.id}/lock?locked=${!p.locked}`,{method:"POST"});
+  await openChapter(chapter.number);
+}
+async function delPanel(id){
+  if(!confirm("Delete this panel and its image?"))return;
+  await api(`${base()}/panels/${id}`,{method:"DELETE"});
+  await openChapter(chapter.number); await refreshProject();
+}
+
+// ---------------------------------------------------------------- dialogs
+
+function styleChooser(host,sel,onPick){
+  host.innerHTML="";
+  styles.forEach(s=>{
+    const d=document.createElement("div");
+    d.className="styleopt"+(s.id===sel?" on":"");
+    d.innerHTML=`<b>${esc(s.name)}</b>${s.is_default?' <small style="color:var(--accent)">default</small>':""}<div>${esc(s.lead)}…</div>`;
+    d.onclick=()=>{sel=s.id;onPick(s.id);styleChooser(host,sel,onPick);};
+    host.append(d);
+  });
+}
+
+let newStyle="xianxia-premium-webtoon";
+$("#btnNewProject").onclick=()=>{
+  $("#pName").value="";$("#pDesc").value="";$("#pAdd").value="";
+  newStyle=styles.find(s=>s.is_default)?.id||styles[0]?.id;
+  styleChooser($("#pStyles"),newStyle,id=>newStyle=id);
+  dlgProject.showModal();
+};
+$("#pCreate").onclick=async()=>{
+  const name=$("#pName").value.trim(); if(!name){$("#pName").focus();return;}
+  dlgProject.close();
+  const p=await api("/projects",{method:"POST",body:JSON.stringify({
+    name,description:$("#pDesc").value,style_id:newStyle,style_addendum:$("#pAdd").value})});
+  await refreshProjects(); await openProject(p.id);
+  setStatus("project created — add your cast under Characters, then paste chapter 1");
+};
+
+$("#btnNewChapter").onclick=async()=>{
+  if(!proj){setStatus("pick a project first");return;}
+  const t=prompt("Chapter name:",`Chapter ${proj.chapters.length+1}`); if(t==null)return;
+  const c=await api(`/projects/${proj.id}/chapters`,{method:"POST",body:JSON.stringify({title:t})});
+  await refreshProject(); await openChapter(c.number);
+};
+
+let setStyle=null;
+$("#btnSettings").onclick=()=>{
+  if(!proj)return;
+  setStyle=proj.style_id;
+  styleChooser($("#sStyles"),setStyle,id=>setStyle=id);
+  $("#sAdd").value=proj.style_addendum||"";
+  dlgSettings.showModal();
+};
+$("#sSave").onclick=async()=>{
+  dlgSettings.close();
+  await api("/projects/"+proj.id,{method:"PATCH",
+    body:JSON.stringify({style_id:setStyle,style_addendum:$("#sAdd").value})});
+  await refreshProject(); setStatus("style saved — affects panels rendered from now on");
+};
+
+$("#btnBible").onclick=async()=>{
+  if(!proj)return;
+  $("#bYaml").value=(await api(`/projects/${proj.id}/bible`)).yaml;
+  dlgBible.showModal();
+};
+$("#bSave").onclick=async()=>{
+  try{
+    const r=await api(`/projects/${proj.id}/bible`,{method:"PUT",
+      body:JSON.stringify({yaml:$("#bYaml").value})});
+    dlgBible.close(); setStatus(`bible saved — ${r.characters} characters`);
+    await refreshProject();
+  }catch(e){setStatus("✕ "+e.message,null);}
+};
+
+let editing=null;
+function openPanel(p){
+  editing=p; $("#edId").textContent=p.id;
+  const fill=(el,opts,v)=>{el.innerHTML="";opts.forEach(o=>{
+    const x=document.createElement("option");x.value=o;x.textContent=o.replace(/_/g," ");
+    if(o===v)x.selected=true;el.append(x);});};
+  fill($("#edShot"),SHOTS,p.shot); fill($("#edAspect"),ASPECTS,p.aspect);
+  $("#edAction").value=p.action||""; $("#edSetting").value=p.setting||"";
+  $("#edLighting").value=p.lighting||""; $("#edCamera").value=p.camera||"";
+  $("#edFx").value=(p.fx||[]).join(", ");
+  dlgPanel.showModal();
+}
+$("#edSave").onclick=async()=>{
+  const id=editing.id; dlgPanel.close();
+  await api(`${base()}/panels/${id}`,{method:"PATCH",body:JSON.stringify({
+    shot:$("#edShot").value,aspect:$("#edAspect").value,action:$("#edAction").value,
+    setting:$("#edSetting").value,lighting:$("#edLighting").value,camera:$("#edCamera").value,
+    fx:$("#edFx").value.split(",").map(s=>s.trim()).filter(Boolean)})});
+  // Same seed on purpose: holding it fixed shows what the wording changed,
+  // instead of confounding the edit with a whole new composition.
+  await renderPanel(id,false);
+};
+
+// ---------------------------------------------------------------- dock
+
+$("#btnBreak").onclick=async()=>{
+  if(!chapter){setStatus("pick a chapter first");return;}
+  const story=$("#story").value.trim(); if(!story)return;
+  setStatus("breaking down…",.4);
+  try{
+    const r=await api(`${base()}/breakdown`,{method:"POST",body:JSON.stringify({story})});
+    $("#story").value="";
+    setStatus(`+${r.added} panels in beat ${r.beat} — review, then Render beat`,1);
+    await openChapter(chapter.number); await refreshProject();
+  }catch(e){setStatus("✕ "+e.message,null);}
+};
+$("#btnRender").onclick=()=>chapter&&renderBeat();
+$("#btnExport").onclick=async()=>{
+  if(!chapter)return;
+  setStatus("composing strip…",.5);
+  try{
+    const r=await api(`${base()}/export`,{method:"POST"});
+    setStatus(`exported ${r.panels} panels · ${r.height}px tall · ${r.files.length} files`,1);
+  }catch(e){setStatus("✕ "+e.message,null);}
+};
+
+// ---------------------------------------------------------------- boot
+
+(async()=>{
+  try{
+    const h=await api("/health");
+    $("#health").className="dot "+(h.reachable?"on":"off");
+    $("#healthTxt").textContent=h.backend+(h.reachable?"":" unreachable");
+  }catch{$("#healthTxt").textContent="backend unknown";}
+  styles=await api("/styles");
+  await refreshProjects();
+  if(projects.length) await openProject(projects[0].id); else {drawStrip();drawHeader();}
+  setStatus("ready");
+})();
+</script>
+</body>
+</html>
