@@ -156,10 +156,15 @@ def render(
     _, ch = _resolve(ws, project, chapter)
     be = make_backend(backend, comfy_host)
 
+    # `rendered` is a flag in chapter.json, so a panel whose PNG was deleted
+    # still claims to be rendered and the command reports "nothing to render".
+    # Trust the filesystem: if the image is gone, the panel needs rendering.
     targets = [p for p in ch.panels
                if (beat < 0 or p.beat == beat)
                and not ch.stat(p.id).locked
-               and (force or not ch.stat(p.id).rendered)]
+               and (force
+                    or not ch.stat(p.id).rendered
+                    or not ch.panel_path(p.id).exists())]
     if not targets:
         console.print("[yellow]nothing to render[/yellow]")
         raise typer.Exit()
