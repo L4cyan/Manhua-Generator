@@ -23,3 +23,10 @@ scripts/
 
 # Cloned trainer, not ours to vendor
 tools/sd-scripts/
+
+# ...but these are part of the workflow, not debugging
+!scripts/train_ling_yan.sh
+!scripts/build_lora_dataset.py
+!scripts/clause_lab.py
+!scripts/hairline_ab.py
+!scripts/contact_sheet.py
