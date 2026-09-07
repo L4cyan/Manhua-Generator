@@ -322,13 +322,16 @@ class AnimaEngine:
                     "git+https://github.com/huggingface/diffusers.git"
                 ) from exc
 
-            # bf16 is Anima's native dtype but needs real tensor cores, which
-            # arrived with Ampere (sm_80). Do NOT use is_bf16_supported(): it
-            # returns True when bf16 can merely be EMULATED, so Kaggle's T4
-            # (Turing, sm_75) reports True and you get slow emulated bf16.
+            # Always bf16: Anima is trained in it, and bf16 carries fp32's
+            # exponent range while fp16 does not. Downcasting to fp16 on
+            # pre-Ampere cards overflows to NaN and every render decodes to a
+            # flat blank image. Turing has no bf16 tensor cores so this runs
+            # emulated and slower, but slow and correct beats fast and blank.
             cap = torch.cuda.get_device_capability(0) if torch.cuda.is_available() else (0, 0)
-            dtype = torch.bfloat16 if cap >= (8, 0) else torch.float16
-            print(f"anima dtype: {dtype} (sm_{cap[0]}{cap[1]})", flush=True)
+            dtype = torch.bfloat16
+            native = cap >= (8, 0)
+            print(f"anima dtype: {dtype} (sm_{cap[0]}{cap[1]}"
+                  f"{'' if native else ', emulated - no bf16 tensor cores'})", flush=True)
 
             p = AnimaAutoBlocks().init_pipeline(self.checkpoint)
             p.load_components(torch_dtype=dtype)
