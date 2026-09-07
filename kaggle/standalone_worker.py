@@ -317,8 +317,7 @@ class AnimaEngine:
                 from diffusers import AnimaAutoBlocks
             except ImportError as exc:
                 raise RuntimeError(
-                    "This diffusers build has no Anima support.
-"
+                    "This diffusers build has no Anima support.\n"
                     "Upgrade it:  pip install -U "
                     "git+https://github.com/huggingface/diffusers.git"
                 ) from exc
