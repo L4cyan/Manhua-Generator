@@ -527,8 +527,12 @@ def main(argv=None) -> None:
     ap.add_argument("--no-tunnel", action="store_true")
     args = ap.parse_args(argv)
 
-    if not os.path.exists(args.checkpoint):
-        sys.exit(f"checkpoint not found: {args.checkpoint}")
+    # Only the SDXL engine needs a local checkpoint file; Anima is pulled
+    # from the Hub by repo id, so an empty --checkpoint is correct there.
+    if args.engine == "sdxl" and not os.path.exists(args.checkpoint):
+        sys.exit(f"checkpoint not found: {args.checkpoint!r}\n"
+                 "Pass --checkpoint /path/to/model.safetensors, "
+                 "or use --engine anima to pull from the Hub.")
 
     # Check the GPU arch BEFORE spending 90s loading a checkpoint. Current
     # PyTorch wheels ship kernels for sm_70+ only, so Kaggle's P100 (Pascal,
@@ -553,8 +557,14 @@ def main(argv=None) -> None:
     except ImportError:
         sys.exit("torch is not installed")
 
-    engine = Engine(args.checkpoint, args.lora_dir, low_vram=args.low_vram)
-    print("loading checkpoint (60-90s on first run)...", flush=True)
+    if args.engine == "anima":
+        engine = AnimaEngine(args.checkpoint, args.lora_dir, low_vram=args.low_vram)
+        print(f"engine: Anima ({engine.checkpoint})", flush=True)
+        print("downloading from the Hub on first run, this takes a few minutes...",
+              flush=True)
+    else:
+        engine = Engine(args.checkpoint, args.lora_dir, low_vram=args.low_vram)
+        print("loading checkpoint (60-90s on first run)...", flush=True)
     _ = engine.pipe
     print("model resident, worker ready", flush=True)
 
