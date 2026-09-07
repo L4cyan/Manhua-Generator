@@ -18,8 +18,9 @@ version: 1
 
 # Front-loaded. Keep this SHORT -- under ~20 tokens.
 style_lead: >-
-  masterpiece, best quality, modern manhua art style, premium webtoon aesthetic,
-  2D digital comic illustration
+  masterpiece, best quality, amazing quality, very aesthetic, absurdres,
+  newest, ultra-detailed, high resolution,
+  manhua art style, premium webtoon aesthetic, 2D digital comic illustration
 
 # ---------- SETTING REGISTER ----------
 # Genre words are extremely strong in the front-loaded lead -- strong enough to
@@ -28,7 +29,7 @@ style_lead: >-
 # welded on permanently.
 registers:
   cultivation: xianxia wuxia eastern fantasy cultivation genre
-  modern: modern day contemporary setting, real world
+  modern: contemporary present day setting, real world, city, everyday clothing
   neutral: ""
 
 # Trails the panel content. The bulk of the aesthetic description.
@@ -63,13 +64,13 @@ positive_suffix: >-
   official art, extremely detailed, sharp focus, professional colouring
 
 negative: >-
-  worst quality, low quality, normal quality, lowres, jpeg artifacts, blurry,
-  sketch, unfinished, monochrome, greyscale, 3d render, photorealistic, photo,
-  western comic style, american cartoon, chibi, deformed, disfigured,
-  bad anatomy, bad hands, extra fingers, fused fingers, missing fingers,
-  extra limbs, malformed limbs, mutated, long neck, cross-eyed,
-  text, watermark, signature, username, artist name, logo, speech bubble,
-  border, frame, panel border, letterbox, cropped head, out of frame
+  modern, recent, old, oldest, cartoon, graphic, text, painting, crayon,
+  graphite, abstract, glitch, deformed, mutated, ugly, disfigured, long body,
+  lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer digits,
+  cropped, very displeasing, (worst quality, bad quality:1.2), sketch,
+  jpeg artifacts, signature, watermark, username, simple background,
+  conjoined, bad ai-generated, 3d, photorealistic, blurry,
+  speech bubble, border, panel border, letterbox
 
 # ---------- RENDER LOCK ----------
 # Frozen sampler settings. Identical across every panel so the
@@ -81,7 +82,7 @@ render:
   # exactly where consistency matters most. Style goes in as a LoRA below,
   # where it stays a tunable dial instead of a checkpoint swap.
   checkpoint: Illustrious-XL-v1.1.safetensors
-  sampler: dpmpp_2m_sde
+  sampler: euler_a
   scheduler: karras
   steps: 30          # Illustrious sweet spot is 30-50
   cfg: 4.5           # Illustrious prefers 3.5-4.5; SDXL-default 7+ oversaturates

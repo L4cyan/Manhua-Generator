@@ -51,6 +51,33 @@ def parse_weights(text: str) -> list[tuple[str, float]]:
     return [(t, w) for t, w in out if t.strip()]
 
 
+# Sampler name -> diffusers scheduler. The style lock names a sampler but
+# diffusers ignores it unless the scheduler is swapped explicitly, so without
+# this every render silently used whatever the checkpoint shipped with.
+def apply_scheduler(pipe, sampler: str, scheduler: str = "") -> None:
+    from diffusers import (
+        DPMSolverMultistepScheduler,
+        EulerAncestralDiscreteScheduler,
+        EulerDiscreteScheduler,
+    )
+
+    karras = "karras" in (scheduler or "").lower()
+    name = (sampler or "").lower()
+    cfg = pipe.scheduler.config
+    try:
+        if name in ("euler_a", "euler_ancestral", "euler a"):
+            pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(cfg)
+        elif name == "euler":
+            pipe.scheduler = EulerDiscreteScheduler.from_config(
+                cfg, use_karras_sigmas=karras)
+        elif name in ("dpmpp_2m_sde", "dpmpp_2m"):
+            pipe.scheduler = DPMSolverMultistepScheduler.from_config(
+                cfg, use_karras_sigmas=karras,
+                algorithm_type="sde-dpmsolver++" if "sde" in name else "dpmsolver++")
+    except Exception:
+        pass                     # keep the checkpoint default rather than fail
+
+
 class NativeBackend(Backend):
     """SDXL via diffusers, tuned for small-VRAM cards."""
 
@@ -309,6 +336,7 @@ class NativeBackend(Backend):
 
         self._sync_loras(req.loras)
         s = req.style.render
+        apply_scheduler(self.pipe, s.sampler, s.scheduler)
         h = req.style.hires
 
         pos, pos_pooled = self._encode(req.positive, s.clip_skip)

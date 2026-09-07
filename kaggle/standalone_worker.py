@@ -56,11 +56,40 @@ class Req:
     steps: int
     cfg: float
     clip_skip: int
+    sampler: str = "euler_a"
+    scheduler: str = ""
     loras: list = field(default_factory=list)
     hires_enabled: bool = False
     hires_scale: float = 1.5
     hires_denoise: float = 0.4
     hires_steps: int = 12
+
+
+# Sampler name -> diffusers scheduler. The style lock names a sampler but
+# diffusers ignores it unless the scheduler is swapped explicitly, so without
+# this every render silently used whatever the checkpoint shipped with.
+def apply_scheduler(pipe, sampler: str, scheduler: str = "") -> None:
+    from diffusers import (
+        DPMSolverMultistepScheduler,
+        EulerAncestralDiscreteScheduler,
+        EulerDiscreteScheduler,
+    )
+
+    karras = "karras" in (scheduler or "").lower()
+    name = (sampler or "").lower()
+    cfg = pipe.scheduler.config
+    try:
+        if name in ("euler_a", "euler_ancestral", "euler a"):
+            pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(cfg)
+        elif name == "euler":
+            pipe.scheduler = EulerDiscreteScheduler.from_config(
+                cfg, use_karras_sigmas=karras)
+        elif name in ("dpmpp_2m_sde", "dpmpp_2m"):
+            pipe.scheduler = DPMSolverMultistepScheduler.from_config(
+                cfg, use_karras_sigmas=karras,
+                algorithm_type="sde-dpmsolver++" if "sde" in name else "dpmsolver++")
+    except Exception:
+        pass                     # keep the checkpoint default rather than fail
 
 
 # --------------------------------------------------------------------- engine
@@ -213,6 +242,7 @@ class Engine:
         from PIL import Image
 
         self._sync_loras(r.loras)
+        apply_scheduler(self.pipe, r.sampler, r.scheduler)
         pos, pos_p = self._encode(r.positive, r.clip_skip)
         neg, neg_p = self._encode(r.negative, r.clip_skip)
 
@@ -284,6 +314,8 @@ class RenderBody(BaseModel):
     steps: int = 30
     cfg: float = 4.5
     clip_skip: int = 2
+    sampler: str = "euler_a"
+    scheduler: str = ""
     hires: Hires = Hires()
 
 
@@ -319,7 +351,8 @@ def build_app(engine: Engine, token: str):
         r = Req(positive=body.positive, negative=body.negative,
                 width=body.width, height=body.height, seed=body.seed,
                 steps=body.steps, cfg=body.cfg, clip_skip=body.clip_skip,
-                loras=body.loras, hires_enabled=body.hires.enabled,
+                loras=body.loras, sampler=body.sampler, scheduler=body.scheduler,
+                hires_enabled=body.hires.enabled,
                 hires_scale=body.hires.scale, hires_denoise=body.hires.denoise,
                 hires_steps=body.hires.steps)
         # Return the real traceback instead of a bare 500. The client is on

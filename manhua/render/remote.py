@@ -58,6 +58,8 @@ class RemoteBackend(Backend):
             "steps": s.steps,
             "cfg": s.cfg,
             "clip_skip": s.clip_skip,
+            "sampler": s.sampler,
+            "scheduler": s.scheduler,
             "hires": {
                 "enabled": h.enabled,
                 "scale": h.scale,

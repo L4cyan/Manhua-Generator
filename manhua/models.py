@@ -148,7 +148,7 @@ class Panel(BaseModel):
             char = bible.get(ref.id)
             if char is None:
                 continue
-            parts.append(char.appearance_prompt(ref))
+            parts.append(char.appearance_prompt(ref, world=self.world))
 
         if self.action:
             parts.append(self.action)
@@ -173,6 +173,11 @@ class Character(BaseModel):
     # Immutable physical description. Written once, never varied per panel.
     appearance: str
     default_outfit: str = ""
+    # Per-world wardrobe, keyed by Panel.world. An isekai protagonist wears a
+    # blazer and glasses in act one and robes after transmigrating, and the
+    # panel already knows which world it is in -- so the outfit follows from
+    # that rather than needing a manual override on every single panel.
+    outfits: dict[str, str] = Field(default_factory=dict)
     # Appended to the negative prompt whenever this character appears.
     # Needed because the style lock pushes traits onto everyone -- e.g.
     # "flowing gravity-defying movement" gives every character long hair,
@@ -188,12 +193,19 @@ class Character(BaseModel):
     # Path to the turnaround sheet used as the QA drift reference.
     sheet_dir: str | None = None
 
-    def appearance_prompt(self, ref: CharacterRef | None = None) -> str:
+    def appearance_prompt(self, ref: CharacterRef | None = None,
+                          world: str = "") -> str:
         parts: list[str] = []
         if self.trigger:
             parts.append(self.trigger)
         parts.append(self.appearance)
-        outfit = (ref.outfit if ref and ref.outfit else self.default_outfit)
+        # Explicit per-panel override wins, then the world's wardrobe entry,
+        # then the default.
+        outfit = (
+            (ref.outfit if ref and ref.outfit else None)
+            or self.outfits.get(world)
+            or self.default_outfit
+        )
         if outfit:
             parts.append(outfit)
         if ref:
