@@ -75,6 +75,7 @@ def sheet_requests(
     base_seed: int | None = None,
     angles: bool = True,
     expressions: bool = True,
+    outfits: list[str] | None = None,
 ) -> list[tuple[str, RenderRequest]]:
     """Build the render requests for one character's sheet.
 
@@ -91,10 +92,22 @@ def sheet_requests(
     if expressions:
         plan += [(f"expr_{n}", f"close-up portrait, front view, {t}") for n, t in EXPRESSIONS]
 
+    # Cover every wardrobe the character has, alternating across the plan.
+    # One LoRA per person, not per outfit: training separate LoRAs for a
+    # professor form and a cultivator form produces two people who slowly
+    # diverge. Showing the same face in different clothes teaches the model
+    # that the face is the constant and the clothing is not, so the outfit
+    # stays promptable afterwards.
+    wardrobe = outfits or list(character.outfits.values()) or [character.default_outfit]
+    wardrobe = [w for w in wardrobe if w] or [""]
+
     out: list[tuple[str, RenderRequest]] = []
     for i, (name, framing) in enumerate(plan):
+        outfit = wardrobe[i % len(wardrobe)]
+        name = f"{name}__w{i % len(wardrobe)}"
+        appearance = character.appearance_prompt(include_outfit=False)
         content = ", ".join(
-            [framing, sex_tag, character.appearance_prompt(), SHEET_NEUTRALISER]
+            [framing, sex_tag, appearance, outfit, SHEET_NEUTRALISER]
         )
         loras: list[tuple[str, float]] = []
         if style.render.style_lora:
@@ -104,7 +117,12 @@ def sheet_requests(
             (
                 name,
                 RenderRequest(
-                    positive=style.positive(content),
+                    # register="neutral" deliberately: the default is
+                    # "cultivation", whose genre clause ("xianxia wuxia eastern
+                    # fantasy cultivation") overpowers the outfit text and put
+                    # the character in robes even for the modern wardrobe. A
+                    # reference sheet wants the person, not the genre.
+                    positive=style.positive(content, register="neutral"),
                     negative=f"{style.negative}, {SHEET_NEGATIVE_EXTRA}",
                     width=832,
                     height=1216,

@@ -200,20 +200,24 @@ class Character(BaseModel):
     sheet_dir: str | None = None
 
     def appearance_prompt(self, ref: CharacterRef | None = None,
-                          world: str = "") -> str:
+                          world: str = "", include_outfit: bool = True) -> str:
         parts: list[str] = []
         if self.trigger:
             parts.append(self.trigger)
         parts.append(self.appearance)
         # Explicit per-panel override wins, then the world's wardrobe entry,
-        # then the default.
-        outfit = (
-            (ref.outfit if ref and ref.outfit else None)
-            or self.outfits.get(world)
-            or self.default_outfit
-        )
-        if outfit:
-            parts.append(outfit)
+        # then the default. Callers that supply their own outfit (the sheet
+        # generator cycles the whole wardrobe) pass include_outfit=False,
+        # otherwise the default is emitted alongside theirs and the character
+        # ends up described in two outfits at once.
+        if include_outfit:
+            outfit = (
+                (ref.outfit if ref and ref.outfit else None)
+                or self.outfits.get(world)
+                or self.default_outfit
+            )
+            if outfit:
+                parts.append(outfit)
         if ref:
             if ref.expression:
                 parts.append(f"{ref.expression} expression")
