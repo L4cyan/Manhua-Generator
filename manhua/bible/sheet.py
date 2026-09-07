@@ -37,9 +37,9 @@ ANGLES: list[tuple[str, str]] = [
     ("profile_r",        "close-up portrait, full side profile facing right"),
     ("looking_up",       "close-up portrait, low angle, chin raised, looking up"),
     ("looking_down",     "close-up portrait, high angle, eyes downcast"),
-    ("full_front",       "full body shot, front view, standing, head to toe"),
-    ("full_back",        "full body shot, seen from behind, standing"),
-    ("full_three_q",     "full body shot, three-quarter view, standing"),
+    ("full_front",       "solo, one person only, full body shot, front view, standing, head to toe"),
+    ("full_back",        "solo, one person only, full body shot, seen from behind, standing"),
+    ("full_three_q",     "solo, one person only, full body shot, three-quarter view, standing"),
     ("upper_turn",       "medium shot, turning to look over the shoulder at viewer"),
 ]
 
@@ -74,8 +74,6 @@ SHEET_STYLE_STRIP = [
     "dramatic and ethereal vibe",
     "ethereal atmospheric lighting",
     "prominent rim lighting",
-    "soft dark brown or deep purple outlines instead of pure black",
-    "vibrant color rendering",
 ]
 
 

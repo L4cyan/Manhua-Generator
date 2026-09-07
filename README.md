@@ -92,11 +92,26 @@ python -m manhua.cli sheet my-story ling_yan
 
 Renders ~24 reference images (angles + expressions) through your project's own style lock, then writes a kohya training config.
 
-**Then cull the sheet by hand.** Delete anything that isn't clearly the same person. This step matters more than any training hyperparameter — a sheet with three faces in it trains a LoRA that produces three faces.
+**Then cull the sheet.** Reject anything that isn't clearly the same person. This step matters more than any training hyperparameter — a sheet with three faces in it trains a LoRA that produces three faces.
+
+```bash
+# 1. reject the off-model ones (moves them out of the training directory)
+python -m manhua.cli reroll my-story ling_yan --reject expr_calm full_front
+
+# 2. refill just those slots, at fresh seeds, leaving every keeper untouched
+python -m manhua.cli reroll my-story ling_yan expr_calm full_front --tries 3
+
+# 3. promote the ones you like
+python -m manhua.cli reroll my-story ling_yan --promote out/reroll/expr_calm__w0_s5242.png
+```
+
+Re-running `manhua sheet` to fill a few holes is the wrong tool: a new base seed changes *every* slot, so the twenty images you kept come back as twenty different pictures. `reroll` re-renders only what you name.
+
+Culling also tells you what your appearance string actually says. If every rejected render shares one trait, that trait is in the prompt — "curtain bangs" means centre-parted by definition, so if you wanted a side sweep, no amount of rerolling fixes it. Fix the string, then reroll.
 
 Train with [kohya_ss](https://github.com/bmaltais/kohya_ss), drop the `.safetensors` into `ComfyUI/models/loras/`, and set the character's `lora:` field.
 
-> On 6GB VRAM, LoRA *training* takes 1–2 hours (inference is already offload-bound at ~230s/panel). A free Kaggle P100 does both far faster — see [kaggle/README.md](kaggle/README.md).
+> On 6GB VRAM, LoRA *training* takes 1–2 hours. Inference is not the bottleneck it used to be: through ComfyUI, `anima-turbo` renders a panel in ~30s at 8 steps and ~10s at 4. Free Kaggle GPUs are a poor fit for Anima specifically — the T4 has no bf16 tensor cores and Anima is bf16-native, and current PyTorch wheels ship no sm_60 kernels for the P100 at all. See [kaggle/README.md](kaggle/README.md).
 
 **Why this step is not optional:** an appearance string gets you roughly 70%
 consistency. In a four-panel test using only text, the same character rendered

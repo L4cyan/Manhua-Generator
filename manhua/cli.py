@@ -271,11 +271,146 @@ def sheet(
     console.print(f"[green]training config[/green] -> {cfg}")
     console.print(
         "\n[bold]Next:[/bold]\n"
-        "  1. Cull the sheet by hand. Delete anything that is not clearly the SAME person.\n"
+        "  1. Cull the sheet. Reject anything that is not clearly the SAME person:\n"
+        f"     [cyan]manhua reroll {project} {character} --reject <slot> <slot>[/cyan]\n"
         "     This matters more than any training setting.\n"
-        "  2. Train with kohya_ss / sd-scripts using the config above.\n"
-        f"  3. Set [cyan]lora:[/cyan] on '{character}' in {proj.bible_file}"
+        f"  2. Refill the gaps: [cyan]manhua reroll {project} {character} <slot>[/cyan]\n"
+        "  3. Train with kohya_ss / sd-scripts using the config above.\n"
+        f"  4. Set [cyan]lora:[/cyan] on '{character}' in {proj.bible_file}"
     )
+
+
+@app.command()
+def reroll(
+    project: str = typer.Argument(...),
+    character: str = typer.Argument(..., help="Character id from the bible"),
+    slots: list[str] = typer.Argument(None, help="Slot names or substrings, e.g. full_front"),
+    tries: int = typer.Option(2, help="Candidates to render per slot"),
+    offset: int = typer.Option(1000, help="Added to each slot's original seed"),
+    reject: list[str] = typer.Option(None, "--reject",
+                                     help="Move these slots out of the sheet instead"),
+    promote: list[str] = typer.Option(None, "--promote",
+                                      help="Candidate files to move into the sheet"),
+    workspace: str = WS,
+    backend: str = BACKEND,
+    comfy_host: str = HOST,
+) -> None:
+    """Re-render individual slots of a reference sheet.
+
+    Culling always leaves holes, and re-running `manhua sheet` to fill three of
+    them is the wrong tool: a new base seed changes every slot, so the twenty
+    images you kept come back as twenty different pictures. This touches only
+    the slots you name, at fresh seeds, and leaves the rest byte-identical.
+
+    The loop is reject -> reroll -> promote:
+
+        manhua reroll <proj> <char> --reject expr_calm expr_laugh
+        manhua reroll <proj> <char> expr_calm expr_laugh --tries 3
+        manhua reroll <proj> <char> --promote out/reroll/expr_calm__w0_s5242.png
+    """
+    import json
+    import shutil
+
+    from PIL import Image, ImageDraw
+
+    from .bible.sheet import sheet_requests
+
+    ws = Workspace(root=Path(workspace))
+    try:
+        proj = ws.load_project(project)
+    except FileNotFoundError:
+        console.print(f"[red]no project '{project}'[/red]")
+        raise typer.Exit(1)
+
+    char = proj.bible.get(character)
+    if char is None:
+        console.print(f"[red]no character '{character}'[/red] - "
+                      f"bible has: {', '.join(proj.bible) or 'nobody'}")
+        raise typer.Exit(1)
+
+    sheet_dir = proj.dir / "bible" / character
+    # Rejects leave the sheet directory entirely rather than sitting in a
+    # subfolder: trainers read the whole tree, and a rejected face that is
+    # still in the tree is still training data.
+    bin_dir = proj.dir / "bible" / "_rejected" / character
+
+    if reject:
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        moved = 0
+        for f in sorted(sheet_dir.glob("*.png")):
+            if any(s in f.stem for s in reject):
+                shutil.move(str(f), bin_dir / f.name)
+                console.print(f"  rejected [yellow]{f.stem}[/yellow]")
+                moved += 1
+        remaining = len(list(sheet_dir.glob("*.png")))
+        console.print(f"\n{moved} moved to {bin_dir} · [green]{remaining} left[/green]")
+        return
+
+    if promote:
+        for f in promote:
+            src = Path(f)
+            if not src.exists():
+                console.print(f"[red]no such file: {src}[/red]")
+                raise typer.Exit(1)
+            # <slot>_s<seed>.png -> <character>_<slot>.png
+            slot = src.stem.rsplit("_s", 1)[0]
+            shutil.copy2(src, sheet_dir / f"{char.id}_{slot}.png")
+            console.print(f"  promoted [green]{slot}[/green]")
+        return
+
+    if not slots:
+        console.print("[red]name at least one slot, or pass --reject / --promote[/red]")
+        raise typer.Exit(1)
+
+    seed_file = sheet_dir / "_seed.json"
+    if not seed_file.exists():
+        console.print(f"[red]no {seed_file}[/red] - run [cyan]manhua sheet[/cyan] first")
+        raise typer.Exit(1)
+    base_seed = json.loads(seed_file.read_text(encoding="utf-8"))["base_seed"]
+
+    # Rebuild the whole plan so each slot keeps its own framing, wardrobe and
+    # original seed; only the seed offset differs.
+    reqs = sheet_requests(char, proj.style, base_seed=base_seed)
+    wanted = [(n, r) for n, r in reqs if any(s in n for s in slots)]
+    if not wanted:
+        console.print(f"[red]no slot matched {list(slots)}[/red]")
+        console.print("available: " + ", ".join(n for n, _ in reqs))
+        raise typer.Exit(1)
+
+    be = make_backend(backend, comfy_host)
+    out = Path("out/reroll")
+    out.mkdir(parents=True, exist_ok=True)
+    made: list[Path] = []
+
+    console.print(f"rerolling [cyan]{len(wanted)}[/cyan] slot(s) "
+                  f"x {tries} -> {len(wanted) * tries} renders")
+    for name, req in wanted:
+        original = req.seed
+        for k in range(tries):
+            # Offset from the ORIGINAL seed every time, not the previous one,
+            # so --offset means the same thing on each try.
+            req.seed = original + offset * (k + 1)
+            img = be.render(req)
+            path = out / f"{name}_s{req.seed}.png"
+            img.save(path)
+            made.append(path)
+            console.print(f"  {name}  seed {req.seed}")
+
+    cols = min(4, len(made))
+    tw, th, lab = 300, 438, 22
+    rows = -(-len(made) // cols)
+    contact = Image.new("RGB", (cols * tw, rows * (th + lab)), "white")
+    d = ImageDraw.Draw(contact)
+    for i, p in enumerate(made):
+        x, y = (i % cols) * tw, (i // cols) * (th + lab)
+        contact.paste(Image.open(p).resize((tw, th)), (x, y))
+        d.text((x + 4, y + th + 4), p.stem[:44], fill="black")
+    contact.save("out/reroll_contact.png")
+
+    console.print(f"\n[green]{len(made)} candidates[/green] -> {out}")
+    console.print("contact sheet -> out/reroll_contact.png")
+    console.print(f"promote the good ones: "
+                  f"[cyan]manhua reroll {project} {character} --promote <file>[/cyan]")
 
 
 @app.command()
