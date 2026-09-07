@@ -92,11 +92,36 @@ class Engine:
             p.vae.config.force_upcast = True
             if self.low_vram:
                 p.enable_model_cpu_offload()
-                p.enable_vae_tiling()
             else:
                 p.to("cuda")
+            # Always on, even with plenty of VRAM: the hires pass decodes a
+            # ~1250x1825 latent, and an untiled VAE decode at that size asks
+            # for >2GB in one allocation and OOMs a 16GB T4.
+            p.enable_vae_tiling()
+            p.enable_vae_slicing()
+            try:
+                p.enable_attention_slicing()
+            except Exception:
+                pass
             self._pipe = p
         return self._pipe
+
+    def _restore_vae_dtype(self) -> None:
+        """Put the VAE back to fp16 after a decode.
+
+        Diffusers upcasts the VAE to fp32 for decoding and leaves it that way.
+        In a long-lived worker that poisons every later request: the upcast is
+        guarded by `vae.dtype == float16`, so once it is fp32 the guard is
+        False, the latents are no longer cast to match, and the next decode
+        dies with 'Input type (c10::Half) and bias type (float)'.
+        """
+        import torch
+
+        try:
+            if self._pipe is not None and self._pipe.vae.dtype != torch.float16:
+                self._pipe.vae.to(torch.float16)
+        except Exception:
+            pass
 
     def _sync_loras(self, loras: list) -> None:
         want = tuple(tuple(x) for x in loras)
@@ -208,6 +233,7 @@ class Engine:
         )
         img = self.pipe(**common, width=r.width, height=r.height,
                         num_inference_steps=r.steps).images[0]
+        self._restore_vae_dtype()
 
         if r.hires_enabled and r.hires_scale > 1.0:
             from diffusers import StableDiffusionXLImg2ImgPipeline
@@ -215,11 +241,14 @@ class Engine:
             if self._img2img is None:
                 self._img2img = StableDiffusionXLImg2ImgPipeline(**self.pipe.components)
                 self._img2img.set_progress_bar_config(disable=True)
+                self._img2img.enable_vae_tiling()
+                self._img2img.enable_vae_slicing()
             w = int(r.width * r.hires_scale) // 8 * 8
             h = int(r.height * r.hires_scale) // 8 * 8
             img = self._img2img(**common, image=img.resize((w, h), Image.LANCZOS),
                                 strength=r.hires_denoise,
                                 num_inference_steps=r.hires_steps).images[0]
+            self._restore_vae_dtype()
         return img
 
 
