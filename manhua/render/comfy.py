@@ -19,14 +19,93 @@ from .base import Backend, RenderRequest
 
 
 class ComfyBackend(Backend):
-    def __init__(self, host: str = "127.0.0.1:8188", timeout: int = 600):
+    """Renders through a running ComfyUI instance.
+
+    Worth preferring over the in-process backends on a small card: ComfyUI
+    streams weights and offloads automatically, so it runs models that raw
+    diffusers cannot fit. Anima's diffusers pipeline in particular exposes no
+    offload hooks at all (no enable_model_cpu_offload, no vae tiling), so on
+    6GB it loads to zero free VRAM and thrashes -- while ComfyUI handles the
+    same model by managing memory itself.
+    """
+
+    def __init__(self, host: str = "127.0.0.1:8188", timeout: int = 600,
+                 model_type: str = "sdxl", unet: str = "", clip: str = "",
+                 vae: str = ""):
         self.host = host.replace("http://", "").replace("https://", "").rstrip("/")
         self.timeout = timeout
+        # Anima ships as separate components rather than one baked checkpoint,
+        # so it needs a different node graph from SDXL.
+        self.model_type = model_type
+        self.unet = unet or "anima-base-v1.0.safetensors"
+        self.clip = clip or "qwen_3_06b_base.safetensors"
+        self.vae = vae or "qwen_image_vae.safetensors"
         self.client_id = str(uuid.uuid4())
 
     # ---------- graph construction ----------
 
+    def _anima_graph(self, req: RenderRequest) -> dict:
+        """Node graph for Anima.
+
+        Unlike SDXL there is no single checkpoint: the DiT, the Qwen-3 text
+        encoder and the Qwen VAE load separately. ComfyUI decides on its own
+        what to keep resident, which is the whole reason to route Anima here
+        rather than through diffusers.
+        """
+        s = req.style.render
+        return {
+            "unet": {
+                "class_type": "UNETLoader",
+                "inputs": {"unet_name": self.unet, "weight_dtype": "default"},
+            },
+            "clip": {
+                "class_type": "CLIPLoader",
+                "inputs": {"clip_name": self.clip, "type": "anima"},
+            },
+            "vae": {"class_type": "VAELoader", "inputs": {"vae_name": self.vae}},
+            "pos": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": req.positive, "clip": ["clip", 0]},
+            },
+            "neg": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": req.negative, "clip": ["clip", 0]},
+            },
+            "latent": {
+                "class_type": "EmptySD3LatentImage",
+                "inputs": {"width": req.width, "height": req.height, "batch_size": 1},
+            },
+            "sampler": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "seed": req.seed,
+                    "steps": s.steps,
+                    "cfg": s.cfg,
+                    "sampler_name": "euler_ancestral",
+                    "scheduler": "normal",
+                    "denoise": 1.0,
+                    "model": ["unet", 0],
+                    "positive": ["pos", 0],
+                    "negative": ["neg", 0],
+                    "latent_image": ["latent", 0],
+                },
+            },
+            "decode": {
+                "class_type": "VAEDecode",
+                "inputs": {"samples": ["sampler", 0], "vae": ["vae", 0]},
+            },
+            "save": {
+                "class_type": "SaveImage",
+                "inputs": {"filename_prefix": "manhua/anima", "images": ["decode", 0]},
+            },
+        }
+
     def _graph(self, req: RenderRequest) -> dict:
+        if self.model_type == "anima":
+            return self._anima_graph(req)
+        return self._sdxl_graph(req)
+
+    def _sdxl_graph(self, req: RenderRequest) -> dict:
         s = req.style.render
         h = req.style.hires
 
