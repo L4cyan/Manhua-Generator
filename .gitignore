@@ -20,3 +20,6 @@ config/project.yaml
 
 # Ad-hoc debugging scripts
 scripts/
+
+# Cloned trainer, not ours to vendor
+tools/sd-scripts/
