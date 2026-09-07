@@ -161,17 +161,34 @@ def start_tunnel(port: int) -> str | None:
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
     )
 
-    # cloudflared prints the assigned hostname to stderr shortly after start.
-    deadline = time.time() + 60
+    # cloudflared prints the assigned hostname shortly after start.
+    url = None
+    deadline = time.time() + 90
     while time.time() < deadline:
         line = proc.stdout.readline()
         if not line:
+            if proc.poll() is not None:
+                break
             continue
         if "trycloudflare.com" in line:
             for word in line.split():
                 if word.startswith("https://") and "trycloudflare.com" in word:
-                    return word.strip().strip("|,")
-    return None
+                    url = word.strip().strip("|,")
+                    break
+        if url:
+            break
+
+    # Must keep draining: cloudflared logs every request, and a full pipe
+    # buffer blocks it, killing the tunnel while the server still looks fine.
+    def drain() -> None:
+        try:
+            for _ in proc.stdout:
+                pass
+        except Exception:
+            pass
+
+    threading.Thread(target=drain, daemon=True).start()
+    return url
 
 
 def main() -> None:

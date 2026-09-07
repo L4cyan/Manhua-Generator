@@ -12,3 +12,4 @@ fastapi>=0.111
 uvicorn[standard]>=0.30
 python-multipart>=0.0.9
 anthropic>=0.40
+truststore>=0.9        # verify TLS against the OS trust store (AV/proxy MITM)

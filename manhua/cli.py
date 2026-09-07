@@ -7,6 +7,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from .net import enable_system_certs
 from .workspace import Workspace, make_backend
 
 app = typer.Typer(add_completion=False, help="Long-strip manhua generation workspace.")
@@ -366,6 +367,9 @@ def prompt(
 
 
 def main() -> None:
+    # Antivirus/corporate TLS interception breaks certifi-based
+    # verification; use the OS trust store instead.
+    enable_system_certs()
     app()
 
 

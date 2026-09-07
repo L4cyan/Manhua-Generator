@@ -18,6 +18,7 @@ import time
 import requests
 from PIL import Image
 
+from ..net import enable_system_certs
 from .base import Backend, RenderRequest
 
 
@@ -34,6 +35,7 @@ class RemoteBackend(Backend):
         self.token = token
         self.timeout = timeout
         self.retries = retries
+        enable_system_certs()
 
     def _headers(self) -> dict[str, str]:
         h = {"Content-Type": "application/json"}

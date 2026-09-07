@@ -308,16 +308,36 @@ def start_tunnel(port: int) -> str | None:
          "--no-autoupdate"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
     )
+
+    url = None
     deadline = time.time() + 90
     while time.time() < deadline:
         line = proc.stdout.readline()
         if not line:
+            if proc.poll() is not None:      # cloudflared exited
+                break
             continue
         if "trycloudflare.com" in line:
             for word in line.split():
                 if word.startswith("https://") and "trycloudflare.com" in word:
-                    return word.strip().strip("|,")
-    return None
+                    url = word.strip().strip("|,")
+                    break
+        if url:
+            break
+
+    # Keep draining stdout for the life of the process. cloudflared logs every
+    # request; once the ~64KB pipe buffer fills, it blocks on write and stops
+    # forwarding traffic -- the tunnel goes dead while the server still looks
+    # healthy from inside the notebook.
+    def drain() -> None:
+        try:
+            for _ in proc.stdout:
+                pass
+        except Exception:
+            pass
+
+    threading.Thread(target=drain, daemon=True).start()
+    return url
 
 
 def main(argv=None) -> None:
@@ -362,8 +382,22 @@ def main(argv=None) -> None:
         else:
             print("tunnel failed - rerun, or use --no-tunnel", flush=True)
 
-    while True:                          # hold the cell open
-        time.sleep(60)
+    # Hold the cell open, and prove the tunnel is still alive. A silent
+    # notebook cannot be told apart from a dead tunnel.
+    import urllib.request
+
+    served = 0
+    while True:
+        time.sleep(300)
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{args.port}/health", timeout=10
+            ):
+                served += 1
+                print(f"[{time.strftime('%H:%M:%S')}] worker alive "
+                      f"({served * 5} min)", flush=True)
+        except Exception as exc:
+            print(f"[{time.strftime('%H:%M:%S')}] LOCAL HEALTH FAILED: {exc}", flush=True)
 
 
 if __name__ == "__main__":

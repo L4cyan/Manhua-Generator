@@ -17,6 +17,10 @@ import os
 
 import requests
 
+from ..net import enable_system_certs
+
+enable_system_certs()
+
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 CLAUDE_MODEL = os.environ.get("MANHUA_CLAUDE_MODEL", "claude-opus-5")
 
