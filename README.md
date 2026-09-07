@@ -107,11 +107,38 @@ python -m manhua.cli reroll my-story ling_yan --promote out/reroll/expr_calm__w0
 
 Re-running `manhua sheet` to fill a few holes is the wrong tool: a new base seed changes *every* slot, so the twenty images you kept come back as twenty different pictures. `reroll` re-renders only what you name.
 
-Culling also tells you what your appearance string actually says. If every rejected render shares one trait, that trait is in the prompt — "curtain bangs" means centre-parted by definition, so if you wanted a side sweep, no amount of rerolling fixes it. Fix the string, then reroll.
+Culling also tells you what your appearance string actually says. If every rejected render shares one trait, that trait is in the prompt. But **fix it in the framing text, not in the appearance string** — see below. Getting that backwards costs more than the defect did.
 
-Train with [kohya_ss](https://github.com/bmaltais/kohya_ss), drop the `.safetensors` into `ComfyUI/models/loras/`, and set the character's `lora:` field.
+### Don't fix composition in the identity lock
 
-> On 6GB VRAM, LoRA *training* takes 1–2 hours. Inference is not the bottleneck it used to be: through ComfyUI, `anima-turbo` renders a panel in ~30s at 8 steps and ~10s at 4. Free Kaggle GPUs are a poor fit for Anima specifically — the T4 has no bf16 tensor cores and Anima is bf16-native, and current PyTorch wheels ship no sm_60 kernels for the P100 at all. See [kaggle/README.md](kaggle/README.md).
+`appearance` is emitted verbatim into every prompt and is what the LoRA trains on. It decides the character's *face*. Editing it to fix a *composition* problem changes the face, every time.
+
+A worked example from this repo. Ling Yan's appearance said `curtain bangs parted over the forehead`, which contradicts itself — curtain bangs hang down and cover the forehead, "parted over the forehead" uncovers it. The model picked a side per seed, so half of every reference sheet came back with a solid fringe. Two rewrites of that clause both fixed the fringe and both visibly changed his face: softer, longer, weaker jaw.
+
+The fix that worked put the same words in `framing_hint`, which is emitted beside the shot tokens and leaves the identity block byte-identical:
+
+```yaml
+framing_hint: >-
+  forehead visible, parted bangs, hair swept away from the centre of the forehead
+```
+
+A/B across six seeds: **2/6 correct before, 6/6 after, face unchanged.**
+
+Verify prompt changes with [`scripts/hairline_ab.py`](scripts/hairline_ab.py), which renders both variants at the same seeds and *asserts* the identity block is identical when that is the variant's claim. Use [`scripts/clause_lab.py`](scripts/clause_lab.py) to try several candidate clauses at once at 4 steps. Score likeness as well as the thing you changed — a clause that scores 6/6 on bangs and moves the face is a failure.
+
+### Training
+
+```bash
+python scripts/build_lora_dataset.py     # sheet -> captioned dataset + TOML
+bash scripts/train_ling_yan.sh           # ~1 hour on 6GB
+python scripts/lora_qa.py                # base vs LoRA, plus a weight sweep
+```
+
+Then drop the `.safetensors` into `ComfyUI/models/loras/` and set the character's `lora:` field.
+
+**Captioning rule:** caption what should stay *editable*, omit what should be baked in. Name the trigger, the framing, the expression and the wardrobe; never describe the face or hair. Whatever a caption names stays promptable afterwards; whatever it omits is absorbed into the trigger word, which is where identity belongs.
+
+> Anima LoRA training fits 6GB using kohya sd-scripts' `anima_train_network.py` with `--blocks_to_swap 20`, `--qwen_image_vae_2d`, `--network_train_unet_only` and `adafactor`: about 5 s/it at 5.9GB of 6.1GB, so 768 steps takes roughly an hour. Train against `anima-base` and apply the result to `anima-turbo` at render time. Inference is not the bottleneck it used to be: `anima-turbo` renders a panel in ~30s at 8 steps and ~10s at 4. Free Kaggle GPUs are a poor fit for Anima specifically — the T4 has no bf16 tensor cores and Anima is bf16-native, and current PyTorch wheels ship no sm_60 kernels for the P100 at all. See [kaggle/README.md](kaggle/README.md).
 
 **Why this step is not optional:** an appearance string gets you roughly 70%
 consistency. In a four-panel test using only text, the same character rendered
@@ -187,6 +214,23 @@ python -m manhua.cli prompt my-story 1 c001_p003
 ```
 
 It warns if identity slips out of chunk 0.
+
+### Panels with nobody, and panels with strangers
+
+Two cases the style lock gets wrong on its own, both fixed in `build_request`:
+
+**Empty-cast panels.** A style lock describing an art style almost always contains clauses describing a *person* — this one has "narrow piercing eyes with highly detailed vibrant irises" among others, because that is what the art style looks like. Assert those alongside `no humans` and the model resolves the contradiction by painting a pair of giant disembodied eyes across your landscape. Panels with no characters drop the anatomy clauses and keep everything about line, colour and light.
+
+**Crowds and background characters.** People who are not in the bible still need a count tag. Without one the panel gets `no humans` while the action describes a student, and the result is garish and half-formed. Set `extras` on the panel:
+
+```yaml
+extras: 12          # a lecture hall of students
+extras_sex: female  # only used when extras == 1
+```
+
+### Registers set the era, not the place
+
+`world` selects a genre clause. Keep it about time period and wardrobe. This project's `modern` register originally read `contemporary present day setting, real world, city, everyday clothing`, and that stray `city` overpowered twelve panels whose setting said "endless grey void, no ground, no sky". They rendered as a downtown street. Use `neutral` for anywhere that is neither, and pin the wardrobe on the character ref instead.
 
 ---
 
