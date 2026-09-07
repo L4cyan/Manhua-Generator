@@ -38,7 +38,7 @@ ILLUSTRIOUS_HINTS = [
 class Settings:
     """Resolved runtime configuration."""
 
-    backend: str = "native"              # native | remote | comfy | mock | fallback
+    backend: str = "native"   # native | anima | remote | comfy | mock | fallback
     # With backend="fallback": try remote first, drop to this when it is down.
     fallback_to: str = "native"
     checkpoint: str = ""
@@ -216,6 +216,11 @@ def build_backend(s: Settings):
         from .render.remote import RemoteBackend
 
         return RemoteBackend(s.remote_url, s.remote_token)
+
+    if s.backend == "anima":
+        from .render.anima import AnimaBackend
+
+        return AnimaBackend(low_vram=s.low_vram)
 
     if s.backend == "mock":
         from .render.mock import MockBackend

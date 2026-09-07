@@ -468,6 +468,11 @@ def make_backend(kind: str = "auto", host: str = "127.0.0.1:8188") -> Backend:
         cfg.backend = "remote"
         return build_backend(cfg)
 
+    if kind == "anima":
+        from .render.anima import AnimaBackend
+
+        return AnimaBackend()
+
     if kind == "native":
         from .bootstrap import autoconfigure
         from .render.native import NativeBackend
