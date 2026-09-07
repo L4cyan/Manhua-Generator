@@ -282,6 +282,94 @@ class Engine:
         return img
 
 
+# --------------------------------------------------------------------- anima
+
+
+class AnimaEngine:
+    """Anima (CircleStone / Cosmos-Predict2 2B DiT) via diffusers.
+
+    Deliberately much thinner than the SDXL Engine above. Anima uses a Qwen-3
+    text encoder with a long context, so none of the CLIP machinery applies:
+    no 77-token chunking, no dual encoders, no pooled embeds, no clip skip.
+    The prompt just goes in whole.
+    """
+
+    REPO = "CalamitousFelicitousness/Anima-sdnext-diffusers"
+
+    def __init__(self, repo: str = "", lora_dir: str | None = None,
+                 low_vram: bool = False):
+        self.checkpoint = repo or self.REPO
+        self.lora_dir = lora_dir
+        self.low_vram = low_vram
+        self._pipe = None
+        self._loras: tuple = ()
+
+    @property
+    def pipe(self):
+        if self._pipe is None:
+            import torch
+            from diffusers import DiffusionPipeline
+
+            # bf16 is the model's native dtype but needs Ampere or newer.
+            # Kaggle's T4 is Turing, where bf16 has no tensor cores and falls
+            # back to something far slower, so use fp16 there instead.
+            bf16_ok = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+            dtype = torch.bfloat16 if bf16_ok else torch.float16
+            print(f"anima dtype: {dtype}", flush=True)
+
+            p = DiffusionPipeline.from_pretrained(self.checkpoint, torch_dtype=dtype)
+            p.set_progress_bar_config(disable=True)
+            if self.low_vram:
+                p.enable_model_cpu_offload()
+            else:
+                p.to("cuda")
+            for fn in ("enable_vae_tiling", "enable_vae_slicing"):
+                try:
+                    getattr(p, fn)()
+                except Exception:
+                    pass
+            self._pipe = p
+        return self._pipe
+
+    def _sync_loras(self, loras: list) -> None:
+        want = tuple(tuple(x) for x in loras)
+        if want == self._loras:
+            return
+        pipe = self.pipe
+        try:
+            pipe.unload_lora_weights()
+        except Exception:
+            pass
+        names, weights = [], []
+        for i, (fname, weight) in enumerate(want):
+            path = os.path.join(self.lora_dir, fname) if self.lora_dir else fname
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"LoRA not found: {path}")
+            pipe.load_lora_weights(os.path.dirname(path),
+                                   weight_name=os.path.basename(path),
+                                   adapter_name=f"a{i}")
+            names.append(f"a{i}")
+            weights.append(float(weight))
+        if names:
+            pipe.set_adapters(names, adapter_weights=weights)
+        self._loras = want
+
+    def render(self, r: Req):
+        import torch
+
+        self._sync_loras(r.loras)
+        apply_scheduler(self.pipe, r.sampler, r.scheduler)
+        return self.pipe(
+            prompt=r.positive,
+            negative_prompt=r.negative or None,
+            width=r.width,
+            height=r.height,
+            num_inference_steps=r.steps,
+            guidance_scale=r.cfg,
+            generator=torch.Generator(device="cpu").manual_seed(r.seed),
+        ).images[0]
+
+
 # --------------------------------------------------------------------- server
 
 
@@ -332,7 +420,8 @@ def build_app(engine: Engine, token: str):
     @app.get("/health")
     def health(x_auth_token: str | None = Header(None)):
         check(x_auth_token)
-        info = {"ok": True, "checkpoint": os.path.basename(engine.checkpoint)}
+        info = {"ok": True, "checkpoint": os.path.basename(engine.checkpoint),
+                "engine": type(engine).__name__}
         try:
             import torch
 
@@ -429,7 +518,8 @@ def start_tunnel(port: int) -> str | None:
 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--checkpoint", required=True)
+    ap.add_argument("--checkpoint", default="")
+    ap.add_argument("--engine", default="sdxl", choices=["sdxl", "anima"])
     ap.add_argument("--lora-dir", default=None)
     ap.add_argument("--port", type=int, default=8188)
     ap.add_argument("--token", default=os.environ.get("MANHUA_TOKEN", "change-me"))
