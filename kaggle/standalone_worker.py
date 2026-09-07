@@ -293,9 +293,21 @@ def build_app(engine: Engine, token: str):
                 loras=body.loras, hires_enabled=body.hires.enabled,
                 hires_scale=body.hires.scale, hires_denoise=body.hires.denoise,
                 hires_steps=body.hires.steps)
+        # Return the real traceback instead of a bare 500. The client is on
+        # another machine and cannot see this process's stdout, so hiding the
+        # error turns every failure into a guessing game.
+        import traceback
+
         with lock:                      # one GPU, one job
             t0 = time.time()
-            img = engine.render(r)
+            try:
+                img = engine.render(r)
+            except Exception as exc:
+                tb = traceback.format_exc()
+                print(tb, flush=True)
+                raise HTTPException(
+                    500, f"{type(exc).__name__}: {exc}\n{tb[-1500:]}"
+                ) from exc
             dt = time.time() - t0
         buf = io.BytesIO()
         img.save(buf, format="PNG")

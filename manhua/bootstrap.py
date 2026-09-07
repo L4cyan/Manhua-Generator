@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import asdict, dataclass, field
@@ -104,12 +105,22 @@ def find_checkpoints() -> list[Path]:
             if f.stat().st_size > 1_000_000_000:
                 found.append(f)
 
-    def rank(p: Path) -> tuple[int, float]:
+    def rank(p: Path) -> tuple[int, int, float]:
+        """Sort by model family, then newest version, then size.
+
+        Version matters because families ship many releases side by side
+        (novaAnimeXL_ilV160 next to _ilV190). Without it the tie-break falls
+        to file size, which is near-identical between versions and picks
+        essentially at random.
+        """
         name = p.name.lower().replace("_", "").replace("-", "")
+        versions = [int(v) for v in re.findall(r"v(\d+)", name)]
+        newest = -max(versions) if versions else 0
+
         for i, hint in enumerate(ILLUSTRIOUS_HINTS):
             if hint in name:
-                return (i, -p.stat().st_size)
-        return (len(ILLUSTRIOUS_HINTS), -p.stat().st_size)
+                return (i, newest, -p.stat().st_size)
+        return (len(ILLUSTRIOUS_HINTS), newest, -p.stat().st_size)
 
     return sorted(found, key=rank)
 
