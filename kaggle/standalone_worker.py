@@ -310,14 +310,22 @@ class AnimaEngine:
             import torch
             from diffusers import DiffusionPipeline
 
-            # bf16 is the model's native dtype but needs Ampere or newer.
-            # Kaggle's T4 is Turing, where bf16 has no tensor cores and falls
-            # back to something far slower, so use fp16 there instead.
-            bf16_ok = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-            dtype = torch.bfloat16 if bf16_ok else torch.float16
-            print(f"anima dtype: {dtype}", flush=True)
+            # bf16 is the model's native dtype but needs real tensor cores,
+            # which arrived with Ampere (sm_80). Do NOT use
+            # torch.cuda.is_bf16_supported(): it returns True when bf16 can be
+            # *emulated*, so on Kaggle's T4 (Turing, sm_75) it reports True and
+            # you get slow emulated bf16. Check compute capability instead.
+            cap = torch.cuda.get_device_capability(0) if torch.cuda.is_available() else (0, 0)
+            dtype = torch.bfloat16 if cap >= (8, 0) else torch.float16
+            print(f"anima dtype: {dtype} (sm_{cap[0]}{cap[1]})", flush=True)
 
-            p = DiffusionPipeline.from_pretrained(self.checkpoint, torch_dtype=dtype)
+            # The repo ships a custom llm_adapter that bridges Qwen-3
+            # embeddings into T5XXL space, so the model cannot load without
+            # executing it. This is a community conversion, not the official
+            # CircleStone repo.
+            p = DiffusionPipeline.from_pretrained(
+                self.checkpoint, torch_dtype=dtype, trust_remote_code=True
+            )
             p.set_progress_bar_config(disable=True)
             if self.low_vram:
                 p.enable_model_cpu_offload()
