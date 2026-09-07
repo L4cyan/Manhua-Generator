@@ -347,6 +347,11 @@ def reroll(
         return
 
     if promote:
+        if slots:
+            console.print("[red]--promote takes one path per flag.[/red] "
+                          f"These were parsed as slot names and ignored: {list(slots)}")
+            console.print("use: [cyan]--promote a.png --promote b.png[/cyan]")
+            raise typer.Exit(1)
         for f in promote:
             src = Path(f)
             if not src.exists():
@@ -405,7 +410,12 @@ def reroll(
         x, y = (i % cols) * tw, (i // cols) * (th + lab)
         contact.paste(Image.open(p).resize((tw, th)), (x, y))
         d.text((x + 4, y + th + 4), p.stem[:44], fill="black")
-    contact.save("out/reroll_contact.png")
+    try:
+        contact.save("out/reroll_contact.png")
+    except OSError as exc:
+        # Usually the file is open in a viewer. The renders are already
+        # on disk; losing the batch over a preview would be absurd.
+        console.print(f"[yellow]could not write contact sheet:[/yellow] {exc}")
 
     console.print(f"\n[green]{len(made)} candidates[/green] -> {out}")
     console.print("contact sheet -> out/reroll_contact.png")

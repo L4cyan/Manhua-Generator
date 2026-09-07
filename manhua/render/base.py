@@ -35,6 +35,29 @@ class Backend(ABC):
         pass
 
 
+# Style clauses that describe a PERSON. Harmless when someone is in frame,
+# actively destructive when nobody is: see the note in build_request.
+SCENERY_STYLE_STRIP = [
+    "highly stylized sharp angular V-shaped jawlines",
+    "narrow piercing eyes with highly detailed vibrant irises",
+    "prominent stylized eyelashes",
+    "glossy banded specular highlights on hair",
+    "sharp structural folds on clothing fabric",
+]
+
+
+def _scenery_style(style: StyleLock) -> StyleLock:
+    """A copy of the style lock with the anatomy clauses removed."""
+    import copy
+
+    quiet = copy.deepcopy(style)
+    body = quiet.style_body
+    for clause in SCENERY_STYLE_STRIP:
+        body = body.replace(clause + ", ", "").replace(", " + clause, "").replace(clause, "")
+    quiet.style_body = ", ".join(p.strip() for p in body.split(",") if p.strip())
+    return quiet
+
+
 def build_request(
     panel: Panel,
     style: StyleLock,
@@ -66,6 +89,15 @@ def build_request(
         if (c := bible.get(ref.id)) and c.negative
     )
     negative = ", ".join(x for x in (style.negative, shot_neg, char_neg) if x)
+
+    # A panel with nobody in it still inherited the style lock's anatomy
+    # clauses, and "no humans" plus "narrow piercing eyes with highly detailed
+    # vibrant irises" is a contradiction the model resolves by painting a pair
+    # of giant disembodied eyes over the scenery. Empty-cast panels drop the
+    # clauses that describe a body; they keep every clause about line, colour
+    # and light, which is what actually carries the series look.
+    if not panel.characters and not panel.extras:
+        style = _scenery_style(style)
 
     return RenderRequest(
         positive=style.positive(

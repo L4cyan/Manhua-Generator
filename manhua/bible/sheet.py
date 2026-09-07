@@ -37,9 +37,9 @@ ANGLES: list[tuple[str, str]] = [
     ("profile_r",        "close-up portrait, full side profile facing right"),
     ("looking_up",       "close-up portrait, low angle, chin raised, looking up"),
     ("looking_down",     "close-up portrait, high angle, eyes downcast"),
-    ("full_front",       "solo, one person only, full body shot, front view, standing, head to toe"),
-    ("full_back",        "solo, one person only, full body shot, seen from behind, standing"),
-    ("full_three_q",     "solo, one person only, full body shot, three-quarter view, standing"),
+    ("full_front",       "(full body:1.4), head to toe, full figure, feet visible, one person, standing upright, front view"),
+    ("full_back",        "full body shot, seen from behind, standing"),
+    ("full_three_q",     "(full body:1.4), head to toe, full figure, feet visible, one person, standing upright, three-quarter view, eye level, straight-on camera"),
     ("upper_turn",       "medium shot, turning to look over the shoulder at viewer"),
 ]
 
@@ -57,6 +57,19 @@ EXPRESSIONS: list[tuple[str, str]] = [
     ("smile",     "gentle warm smile"),
     ("surprise",  "eyebrows raised in surprise"),
 ]
+
+# The identity lock says "curtain bangs parted over the forehead", which
+# contradicts itself -- curtain bangs hang down and COVER the forehead, and
+# Anima picked a side per seed. Roughly half of every sheet came back with a
+# solid fringe hiding the hairline, off-model against the approved renders.
+#
+# Fixing it inside the identity lock DOES work on the fringe and moves the
+# face: softer, longer, weaker jaw. So the hint lives here, in the framing,
+# where it sits beside "close-up portrait, front view" and leaves the identity
+# block byte-identical. A/B at 8 steps over six seeds: 2/6 without, 6/6 with,
+# faces matching the approved sheet. See scripts/hairline_ab.py.
+SHEET_HAIRLINE = ("forehead visible, parted bangs, "
+                  "hair swept away from the centre of the forehead")
 
 # A sheet must not inherit the series' dramatic lighting or effects: a LoRA
 # trained on rim-lit, qi-wreathed shots bakes those into the character and
@@ -133,7 +146,7 @@ def sheet_requests(
         name = f"{name}__w{i % len(wardrobe)}"
         appearance = character.appearance_prompt(include_outfit=False)
         content = ", ".join(
-            [framing, sex_tag, appearance, outfit, SHEET_NEUTRALISER]
+            [framing, SHEET_HAIRLINE, sex_tag, appearance, outfit, SHEET_NEUTRALISER]
         )
         loras: list[tuple[str, float]] = []
         if style.render.style_lora:

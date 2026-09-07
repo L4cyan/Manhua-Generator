@@ -123,6 +123,10 @@ class Panel(BaseModel):
 
     # Fixed at breakdown time so a re-render of the episode is reproducible.
     seed: int | None = None
+    # Unnamed people who are not in the bible (a lecture hall, a crowd).
+    # Keeps `no humans` off panels that clearly contain people.
+    extras: int = 0
+    extras_sex: str = "male"
     # Set by the QA gate after a reroll, for audit.
     reroll_count: int = 0
 
@@ -133,11 +137,29 @@ class Panel(BaseModel):
         if self.camera:
             parts.append(self.camera)
 
+        # Composition hints belong here, beside the shot tokens, NOT inside the
+        # character's appearance. Editing the identity lock to fix a hairline
+        # changed the character's whole face; the same words placed in the
+        # framing zone fix it and leave the face alone.
+        for ref in self.characters:
+            char = bible.get(ref.id)
+            if char is not None and char.framing_hint:
+                parts.append(char.framing_hint)
+
         n = len(self.characters)
         if n == 1:
             parts.append("1girl" if bible.get(self.characters[0].id, _UNKNOWN).sex == "female" else "1boy")
         elif n > 1:
             parts.append(f"{n} people")
+        elif self.extras:
+            # People who are not in the bible: a lecture hall of students, a
+            # crowd in a square. They still need a count tag, and they must NOT
+            # get `no humans` -- naming a person in the action while asserting
+            # `no humans` is a contradiction the model resolves by rendering
+            # something garish and half-formed.
+            parts.append("1girl" if self.extras == 1 and self.extras_sex == "female"
+                         else "1boy" if self.extras == 1
+                         else f"{self.extras} people, crowd")
         else:
             # An empty cast means a scenery or object panel. Anime checkpoints
             # will happily invent a character anyway, so say so explicitly --
@@ -189,6 +211,14 @@ class Character(BaseModel):
     # "flowing gravity-defying movement" gives every character long hair,
     # and only the character can say that is wrong for them.
     negative: str = ""
+
+    # Composition hints emitted in the FRAMING zone of the prompt, beside the
+    # shot tokens, never inside `appearance`. This is where to put things like
+    # "forehead visible, parted bangs": a self-contradicting clause in the
+    # identity lock makes the model flip a coin per seed, and rewriting the
+    # identity lock to settle it visibly changed the character's face. The
+    # same words placed here fix the composition and leave the face alone.
+    framing_hint: str = ""
 
     # Trained identity LoRA. This is what actually holds a face together
     # across hundreds of panels; the text description alone will not.
