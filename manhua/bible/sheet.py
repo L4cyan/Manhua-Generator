@@ -62,6 +62,31 @@ EXPRESSIONS: list[tuple[str, str]] = [
 # trained on rim-lit, qi-wreathed shots bakes those into the character and
 # they show up in every panel afterwards, including calm indoor ones.
 SHEET_NEUTRALISER = "plain neutral grey background, flat even studio lighting, no special effects"
+
+# Style clauses that describe MOVEMENT or DRAMA rather than the art style get
+# stripped from sheet renders. "flowing gravity-defying movement" in particular
+# gives every character waist-length streaming hair regardless of their
+# description, and on models that ignore negative prompts there is no way to
+# take it back. A reference sheet needs the character standing still.
+SHEET_STYLE_STRIP = [
+    "flowing gravity-defying movement",
+    "dynamic composition",
+    "dramatic and ethereal vibe",
+    "ethereal atmospheric lighting",
+    "prominent rim lighting",
+]
+
+
+def _sheet_style(style: StyleLock) -> StyleLock:
+    """A copy of the style lock with movement/drama clauses removed."""
+    import copy
+
+    quiet = copy.deepcopy(style)
+    body = quiet.style_body
+    for clause in SHEET_STYLE_STRIP:
+        body = body.replace(clause + ", ", "").replace(", " + clause, "").replace(clause, "")
+    quiet.style_body = ", ".join(p.strip() for p in body.split(",") if p.strip())
+    return quiet
 SHEET_NEGATIVE_EXTRA = (
     "dramatic lighting, rim lighting, glowing aura, light particles, lens flare, "
     "busy background, scenery, multiple people, cropped"
@@ -83,6 +108,7 @@ def sheet_requests(
     with the same base regenerates the same sheet, which makes it possible to
     tweak the appearance text and see exactly what changed.
     """
+    style = _sheet_style(style)
     base_seed = base_seed if base_seed is not None else random.randint(0, 2**31 - 1)
     sex_tag = "1girl" if character.sex == "female" else "1boy"
 

@@ -85,8 +85,8 @@ render:
   checkpoint: Illustrious-XL-v1.1.safetensors
   sampler: euler_a
   scheduler: karras
-  steps: 30          # Illustrious sweet spot is 30-50
-  cfg: 4.5           # Illustrious prefers 3.5-4.5; SDXL-default 7+ oversaturates
+  steps: 8           # anima-turbo is distilled for 4-8 steps
+  cfg: 1.5           # turbo needs low guidance; 4+ over-guides and burns
   clip_skip: 2
 
   # Manhwa/manhua style LoRA. Loaded BEFORE character LoRAs (see render/comfy.py)
