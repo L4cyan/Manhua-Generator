@@ -454,6 +454,13 @@ def make_backend(kind: str = "auto", host: str = "127.0.0.1:8188") -> Backend:
 
         return MockBackend()
 
+    if kind == "fallback":
+        from .bootstrap import autoconfigure, build_backend
+
+        cfg = autoconfigure()
+        cfg.backend = "fallback"
+        return build_backend(cfg)
+
     if kind == "remote":
         from .bootstrap import autoconfigure, build_backend
 

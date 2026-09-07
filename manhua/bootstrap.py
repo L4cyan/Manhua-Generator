@@ -38,7 +38,9 @@ ILLUSTRIOUS_HINTS = [
 class Settings:
     """Resolved runtime configuration."""
 
-    backend: str = "native"              # native | remote | comfy | mock
+    backend: str = "native"              # native | remote | comfy | mock | fallback
+    # With backend="fallback": try remote first, drop to this when it is down.
+    fallback_to: str = "native"
     checkpoint: str = ""
     # Cloud worker (see kaggle/worker.py). Set backend to "remote" to use it.
     remote_url: str = ""
@@ -193,6 +195,17 @@ def autoconfigure(workspace: Path = Path("workspace"), force: bool = False) -> S
 
 def build_backend(s: Settings):
     """Instantiate the render backend described by settings."""
+    if s.backend == "fallback":
+        # Remote is ~3x faster; local always works. Prefer speed, keep going
+        # when the free session expires rather than failing the render.
+        from .render.fallback import FallbackBackend
+
+        primary = build_backend(Settings(**{**asdict(s), "backend": "remote", "notes": []}))
+        secondary = build_backend(
+            Settings(**{**asdict(s), "backend": s.fallback_to or "native", "notes": []})
+        )
+        return FallbackBackend(primary, secondary)
+
     if s.backend == "remote":
         if not s.remote_url:
             raise RuntimeError(
