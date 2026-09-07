@@ -378,6 +378,29 @@ def main(argv=None) -> None:
     if not os.path.exists(args.checkpoint):
         sys.exit(f"checkpoint not found: {args.checkpoint}")
 
+    # Check the GPU arch BEFORE spending 90s loading a checkpoint. Current
+    # PyTorch wheels ship kernels for sm_70+ only, so Kaggle's P100 (Pascal,
+    # sm_60) loads the model happily and then dies on the first kernel launch
+    # with "no kernel image is available for execution on the device".
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            major, minor = torch.cuda.get_device_capability(0)
+            name = torch.cuda.get_device_name(0)
+            print(f"GPU: {name} (sm_{major}{minor}), torch {torch.__version__}", flush=True)
+            if (major, minor) < (7, 0):
+                sys.exit(
+                    f"\n{name} is compute capability {major}.{minor}, but this "
+                    "PyTorch build only has kernels for sm_70 and newer.\n"
+                    "On Kaggle: set Accelerator to 'GPU T4 x2' instead of P100, "
+                    "then re-run.\n"
+                )
+        else:
+            sys.exit("No CUDA device. Set Accelerator to GPU in the notebook settings.")
+    except ImportError:
+        sys.exit("torch is not installed")
+
     engine = Engine(args.checkpoint, args.lora_dir, low_vram=args.low_vram)
     print("loading checkpoint (60-90s on first run)...", flush=True)
     _ = engine.pipe

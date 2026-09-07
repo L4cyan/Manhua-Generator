@@ -18,11 +18,16 @@ an assembled prompt string and sends back a PNG.
 
 | | |
 |---|---|
-| GPU | Tesla P100 16GB, or 2× T4 (32GB total) |
+| GPU | **T4 x2** (16GB each). Do NOT pick P100 - see below |
 | Quota | ~30 GPU-hours per week |
 | Session cap | 12 hours, with idle disconnects |
 | Cost | £0 — no card, no trial |
 | Gate | **Phone verification** (required for GPU *and* internet) |
+
+> **Pick T4, not P100.** The P100 is Pascal (compute capability 6.0) and
+> current PyTorch wheels only ship kernels for sm_70 and newer. The model
+> loads fine on a P100 and then fails on the first render with
+> `CUDA error: no kernel image is available for execution on the device`.
 
 At ~25s/panel, 30 hours is roughly **4,300 panels a week**. You will not run out.
 
@@ -43,7 +48,7 @@ needs both.
 
 **Create → New Notebook**, then in the right-hand panel:
 
-- **Accelerator** → `GPU P100`
+- **Accelerator** → `GPU T4 x2`
 - **Internet** → `On`
 
 ### 3. Get your checkpoint onto Kaggle
