@@ -155,8 +155,30 @@ class NativeBackend(Backend):
             pipe.enable_vae_slicing()
         else:
             pipe.to(self.device)
+            # Always tile: a hires decode at ~1250x1825 needs one >2GB
+            # allocation, which OOMs even a 16GB card.
+            pipe.enable_vae_tiling()
+            pipe.enable_vae_slicing()
 
         return pipe
+
+    def _restore_vae_dtype(self) -> None:
+        """Put the VAE back to fp16 after a decode.
+
+        Diffusers upcasts the VAE to fp32 to decode and leaves it there. The
+        upcast is guarded by `vae.dtype == float16`, so once it is fp32 the
+        guard is False, latents stop being cast to match, and the NEXT decode
+        fails with 'Input type (c10::Half) and bias type (float)'. The studio
+        renders many panels through one pipeline, so without this the first
+        panel of a beat succeeds and every one after it fails.
+        """
+        import torch
+
+        try:
+            if self._pipe is not None and self._pipe.vae.dtype != torch.float16:
+                self._pipe.vae.to(torch.float16)
+        except Exception:
+            pass
 
     def _sync_loras(self, loras: list[tuple[str, float]]) -> None:
         """Load exactly the LoRAs this panel needs.
@@ -321,9 +343,11 @@ class NativeBackend(Backend):
         image = self.pipe(
             **common, width=req.width, height=req.height, num_inference_steps=s.steps
         ).images[0]
+        self._restore_vae_dtype()
 
         if h.enabled and h.scale > 1.0:
             image = self._hires(image, req, common, h)
+            self._restore_vae_dtype()
 
         return image
 
