@@ -60,7 +60,11 @@ class ComfyBackend(Backend):
             },
             "clip": {
                 "class_type": "CLIPLoader",
-                "inputs": {"clip_name": self.clip, "type": "anima"},
+                # ComfyUI has no "anima" type: it detects the Qwen3-0.6B
+                # encoder from the weights (TEModel.QWEN3_06B in comfy/sd.py)
+                # and wires the Anima tokenizer itself. The type field just has
+                # to be a valid enum value.
+                "inputs": {"clip_name": self.clip, "type": "qwen_image"},
             },
             "vae": {"class_type": "VAELoader", "inputs": {"vae_name": self.vae}},
             "pos": {
