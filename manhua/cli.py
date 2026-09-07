@@ -279,6 +279,67 @@ def sheet(
 
 
 @app.command()
+def train(
+    project: str = typer.Argument(...),
+    character: str = typer.Argument(..., help="Character id from the bible"),
+    trigger: str = typer.Option("", help="LoRA activation token (default: <id>1n)"),
+    checkpoint_ref: str = typer.Option("", "--checkpoint-ref",
+                                       help="Kaggle dataset ref holding the base checkpoint"),
+    steps: int = typer.Option(1600),
+    workspace: str = WS,
+) -> None:
+    """Train a character identity LoRA on a free Kaggle GPU.
+
+    Uploads the culled turnaround sheet, pushes a training kernel, waits, and
+    drops the resulting .safetensors next to the bible. Run `manhua sheet`
+    first, then cull by hand -- the cull matters more than any setting here.
+    """
+    from .cloud import kaggle as kg
+
+    ws = Workspace(root=Path(workspace))
+    try:
+        proj = ws.load_project(project)
+    except FileNotFoundError:
+        console.print(f"[red]no project '{project}'[/red]")
+        raise typer.Exit(1)
+
+    char = proj.bible.get(character)
+    if char is None:
+        console.print(f"[red]no character '{character}'[/red] - "
+                      f"bible has: {', '.join(proj.bible) or 'nobody'}")
+        raise typer.Exit(1)
+
+    sheet = Path(char.sheet_dir or (proj.dir / "bible" / character))
+    if not sheet.is_dir():
+        console.print(f"[red]no sheet at {sheet}[/red]")
+        console.print(f"run [cyan]manhua sheet {project} {character}[/cyan] first")
+        raise typer.Exit(1)
+
+    user = kg.username() or "lacyanstradia"
+    tok = trigger or f"{character.replace('_', '')}1n"
+    job = proj.dir / "bible" / "_training" / character
+
+    console.print(f"[bold]training {char.name}[/bold] as trigger '{tok}'")
+    try:
+        out = kg.train_character(
+            sheet, checkpoint_ref, character, tok, user, job,
+            steps=steps, on_status=lambda m: console.print(f"  [dim]{m}[/dim]"),
+        )
+    except Exception as exc:
+        console.print(f"[red]training failed:[/red] {exc}")
+        raise typer.Exit(1)
+
+    if not out:
+        console.print("[red]kernel completed but produced no .safetensors[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"\n[green]LoRA ready[/green] {out}")
+    console.print(f"\nAdd to {proj.bible_file} under [cyan]{character}[/cyan]:")
+    console.print(f"    lora: {out.name}")
+    console.print(f"    trigger: {tok}")
+
+
+@app.command()
 def doctor(
     workspace: str = WS,
     backend: str = BACKEND,
