@@ -29,7 +29,7 @@ class RemoteBackend(Backend):
         token: str = "",
         *,
         timeout: float = 300.0,
-        retries: int = 2,
+        retries: int = 6,
     ):
         self.url = url.rstrip("/")
         self.token = token
@@ -90,7 +90,9 @@ class RemoteBackend(Backend):
                 # while it loads a 7GB checkpoint on the first request.
                 last = exc
                 if attempt < self.retries:
-                    time.sleep(3 * (attempt + 1))
+                    # Short, flat backoff: these are dropped TLS handshakes,
+                    # not server overload, so waiting longer does not help.
+                    time.sleep(min(2 + attempt, 6))
                     continue
                 raise RuntimeError(
                     f"Could not reach the render worker at {self.url}.\n"

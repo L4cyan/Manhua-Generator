@@ -226,27 +226,40 @@ class Engine:
 # --------------------------------------------------------------------- server
 
 
+try:
+    from pydantic import BaseModel
+except ImportError:                      # pip install runs before this import
+    BaseModel = object                   # type: ignore[assignment,misc]
+
+
+# These MUST live at module level. This file uses `from __future__ import
+# annotations`, so every annotation is a string, and FastAPI resolves those
+# strings against the module globals. A model defined inside build_app() is
+# invisible there, so FastAPI silently falls back to treating the body as a
+# query parameter and every request 422s with:
+#     {"loc": ["query", "body"], "msg": "Field required"}
+class Hires(BaseModel):
+    enabled: bool = False
+    scale: float = 1.5
+    denoise: float = 0.4
+    steps: int = 12
+
+
+class RenderBody(BaseModel):
+    positive: str
+    negative: str = ""
+    width: int = 832
+    height: int = 1216
+    seed: int = 0
+    loras: list = []
+    steps: int = 30
+    cfg: float = 4.5
+    clip_skip: int = 2
+    hires: Hires = Hires()
+
+
 def build_app(engine: Engine, token: str):
     from fastapi import FastAPI, Header, HTTPException
-    from pydantic import BaseModel
-
-    class Hires(BaseModel):
-        enabled: bool = False
-        scale: float = 1.5
-        denoise: float = 0.4
-        steps: int = 12
-
-    class Body(BaseModel):
-        positive: str
-        negative: str = ""
-        width: int = 832
-        height: int = 1216
-        seed: int = 0
-        loras: list = []
-        steps: int = 30
-        cfg: float = 4.5
-        clip_skip: int = 2
-        hires: Hires = Hires()
 
     app = FastAPI(title="Manhua render worker")
     lock = threading.Lock()
@@ -272,7 +285,7 @@ def build_app(engine: Engine, token: str):
         return info
 
     @app.post("/render")
-    def render(body: Body, x_auth_token: str | None = Header(None)):
+    def render(body: RenderBody, x_auth_token: str | None = Header(None)):
         check(x_auth_token)
         r = Req(positive=body.positive, negative=body.negative,
                 width=body.width, height=body.height, seed=body.seed,
