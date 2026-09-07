@@ -61,7 +61,11 @@ def build_request(
     from ..models import SHOT_NEGATIVES
 
     shot_neg = SHOT_NEGATIVES.get(panel.shot, "")
-    negative = f"{style.negative}, {shot_neg}" if shot_neg else style.negative
+    char_neg = ", ".join(
+        c.negative for ref in panel.characters
+        if (c := bible.get(ref.id)) and c.negative
+    )
+    negative = ", ".join(x for x in (style.negative, shot_neg, char_neg) if x)
 
     return RenderRequest(
         positive=style.positive(

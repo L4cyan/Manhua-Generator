@@ -173,6 +173,11 @@ class Character(BaseModel):
     # Immutable physical description. Written once, never varied per panel.
     appearance: str
     default_outfit: str = ""
+    # Appended to the negative prompt whenever this character appears.
+    # Needed because the style lock pushes traits onto everyone -- e.g.
+    # "flowing gravity-defying movement" gives every character long hair,
+    # and only the character can say that is wrong for them.
+    negative: str = ""
 
     # Trained identity LoRA. This is what actually holds a face together
     # across hundreds of panels; the text description alone will not.
