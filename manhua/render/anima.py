@@ -53,6 +53,16 @@ class AnimaBackend(Backend):
 
         if not torch.cuda.is_available():
             raise RuntimeError("Anima needs a CUDA GPU.")
+        free, total = torch.cuda.mem_get_info()
+        total_mb = total // 1024**2
+        if total_mb < 11000 and not self.low_vram:
+            raise RuntimeError(
+                f"Anima needs about 12GB of VRAM unoffloaded; this card has "
+                f"{total_mb} MiB.\nMeasured on 6GB: the pipeline loads to 0 MiB "
+                "free and generation thrashes at ~33 s/step.\nSet low_vram=True "
+                "to use CPU offload, or use the SDXL backend instead."
+            )
+
         cap = torch.cuda.get_device_capability(0)
         if cap < (8, 0):
             name = torch.cuda.get_device_name(0)
