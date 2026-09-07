@@ -47,6 +47,12 @@ class Settings:
     remote_token: str = ""
     lora_dir: str = ""
     comfy_host: str = "127.0.0.1:8188"
+    # "sdxl" or "anima" - Anima needs a different ComfyUI node graph because
+    # it ships as separate components rather than one baked checkpoint.
+    comfy_model_type: str = "sdxl"
+    comfy_unet: str = ""
+    comfy_clip: str = ""
+    comfy_vae: str = ""
     vram_gb: float = 0.0
     low_vram: bool = True
     script_provider: str = "auto"        # auto | ollama | claude
@@ -229,7 +235,13 @@ def build_backend(s: Settings):
     if s.backend == "comfy":
         from .render.comfy import ComfyBackend
 
-        return ComfyBackend(host=s.comfy_host)
+        return ComfyBackend(
+            host=s.comfy_host,
+            model_type=s.comfy_model_type,
+            unet=s.comfy_unet,
+            clip=s.comfy_clip,
+            vae=s.comfy_vae,
+        )
 
     from .render.native import NativeBackend
 

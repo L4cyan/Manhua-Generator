@@ -20,7 +20,8 @@ version: 1
 style_lead: >-
   masterpiece, best quality, amazing quality, very aesthetic, absurdres,
   newest, ultra-detailed, high resolution,
-  manhua art style, premium webtoon aesthetic, 2D digital comic illustration
+  modern manhua art style, premium webtoon aesthetic,
+  2D digital comic illustration
 
 # ---------- SETTING REGISTER ----------
 # Genre words are extremely strong in the front-loaded lead -- strong enough to
@@ -64,7 +65,7 @@ positive_suffix: >-
   official art, extremely detailed, sharp focus, professional colouring
 
 negative: >-
-  modern, recent, old, oldest, cartoon, graphic, text, painting, crayon,
+  cartoon, graphic, text, painting, crayon,
   graphite, abstract, glitch, deformed, mutated, ugly, disfigured, long body,
   lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer digits,
   cropped, very displeasing, (worst quality, bad quality:1.2), sketch,
