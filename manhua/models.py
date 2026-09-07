@@ -144,16 +144,22 @@ class Panel(BaseModel):
             # `no humans` is a strong Danbooru tag.
             parts.append("no humans")
 
+        # Action and setting come BEFORE the character description. A full
+        # identity block runs ~80 tokens, and anything after it lands in a
+        # later CLIP chunk where it carries much less weight -- which is how
+        # "falling backwards through a white void" turned into a man standing
+        # in a street. Identity still lands early because these are short.
+        if self.action:
+            parts.append(self.action)
+        if self.setting:
+            parts.append(self.setting)
+
         for ref in self.characters:
             char = bible.get(ref.id)
             if char is None:
                 continue
             parts.append(char.appearance_prompt(ref, world=self.world))
 
-        if self.action:
-            parts.append(self.action)
-        if self.setting:
-            parts.append(self.setting)
         if self.lighting:
             parts.append(self.lighting)
         parts.extend(self.fx)
