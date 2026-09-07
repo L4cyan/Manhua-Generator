@@ -288,13 +288,17 @@ class Engine:
 class AnimaEngine:
     """Anima (CircleStone / Cosmos-Predict2 2B DiT) via diffusers.
 
-    Deliberately much thinner than the SDXL Engine above. Anima uses a Qwen-3
-    text encoder with a long context, so none of the CLIP machinery applies:
-    no 77-token chunking, no dual encoders, no pooled embeds, no clip skip.
-    The prompt just goes in whole.
+    Anima ships as a MODULAR diffusers pipeline, not a standard one, so it is
+    built from AnimaAutoBlocks rather than DiffusionPipeline.from_pretrained.
+    Requires diffusers new enough to include the modular Anima support
+    (merged May 2026); older versions raise AttributeError on AnimaAutoBlocks.
+
+    Far thinner than the SDXL Engine: Anima uses a Qwen-3 text encoder with a
+    long context, so there is no 77-token chunking, no dual encoders, no
+    pooled embeds and no clip skip. The prompt goes in whole.
     """
 
-    REPO = "CalamitousFelicitousness/Anima-sdnext-diffusers"
+    REPO = "circlestone-labs/Anima-Base-v1.0-Diffusers"
 
     def __init__(self, repo: str = "", lora_dir: str | None = None,
                  low_vram: bool = False):
@@ -308,66 +312,38 @@ class AnimaEngine:
     def pipe(self):
         if self._pipe is None:
             import torch
-            from diffusers import DiffusionPipeline
 
-            # bf16 is the model's native dtype but needs real tensor cores,
-            # which arrived with Ampere (sm_80). Do NOT use
-            # torch.cuda.is_bf16_supported(): it returns True when bf16 can be
-            # *emulated*, so on Kaggle's T4 (Turing, sm_75) it reports True and
-            # you get slow emulated bf16. Check compute capability instead.
+            try:
+                from diffusers import AnimaAutoBlocks
+            except ImportError as exc:
+                raise RuntimeError(
+                    "This diffusers build has no Anima support.
+"
+                    "Upgrade it:  pip install -U "
+                    "git+https://github.com/huggingface/diffusers.git"
+                ) from exc
+
+            # bf16 is Anima's native dtype but needs real tensor cores, which
+            # arrived with Ampere (sm_80). Do NOT use is_bf16_supported(): it
+            # returns True when bf16 can merely be EMULATED, so Kaggle's T4
+            # (Turing, sm_75) reports True and you get slow emulated bf16.
             cap = torch.cuda.get_device_capability(0) if torch.cuda.is_available() else (0, 0)
             dtype = torch.bfloat16 if cap >= (8, 0) else torch.float16
             print(f"anima dtype: {dtype} (sm_{cap[0]}{cap[1]})", flush=True)
 
-            # The repo ships a custom llm_adapter that bridges Qwen-3
-            # embeddings into T5XXL space, so the model cannot load without
-            # executing it. This is a community conversion, not the official
-            # CircleStone repo.
-            p = DiffusionPipeline.from_pretrained(
-                self.checkpoint, torch_dtype=dtype, trust_remote_code=True
-            )
-            p.set_progress_bar_config(disable=True)
-            if self.low_vram:
+            p = AnimaAutoBlocks().init_pipeline(self.checkpoint)
+            p.load_components(torch_dtype=dtype)
+            if self.low_vram and hasattr(p, "enable_model_cpu_offload"):
                 p.enable_model_cpu_offload()
             else:
                 p.to("cuda")
-            for fn in ("enable_vae_tiling", "enable_vae_slicing"):
-                try:
-                    getattr(p, fn)()
-                except Exception:
-                    pass
             self._pipe = p
         return self._pipe
-
-    def _sync_loras(self, loras: list) -> None:
-        want = tuple(tuple(x) for x in loras)
-        if want == self._loras:
-            return
-        pipe = self.pipe
-        try:
-            pipe.unload_lora_weights()
-        except Exception:
-            pass
-        names, weights = [], []
-        for i, (fname, weight) in enumerate(want):
-            path = os.path.join(self.lora_dir, fname) if self.lora_dir else fname
-            if not os.path.exists(path):
-                raise FileNotFoundError(f"LoRA not found: {path}")
-            pipe.load_lora_weights(os.path.dirname(path),
-                                   weight_name=os.path.basename(path),
-                                   adapter_name=f"a{i}")
-            names.append(f"a{i}")
-            weights.append(float(weight))
-        if names:
-            pipe.set_adapters(names, adapter_weights=weights)
-        self._loras = want
 
     def render(self, r: Req):
         import torch
 
-        self._sync_loras(r.loras)
-        apply_scheduler(self.pipe, r.sampler, r.scheduler)
-        return self.pipe(
+        out = self.pipe(
             prompt=r.positive,
             negative_prompt=r.negative or None,
             width=r.width,
@@ -375,7 +351,16 @@ class AnimaEngine:
             num_inference_steps=r.steps,
             guidance_scale=r.cfg,
             generator=torch.Generator(device="cpu").manual_seed(r.seed),
-        ).images[0]
+        )
+        # Modular pipelines return an output object whose payload attribute
+        # has varied across versions; take whichever image list is present.
+        for attr in ("images", "image"):
+            got = getattr(out, attr, None)
+            if got:
+                return got[0] if isinstance(got, (list, tuple)) else got
+        if isinstance(out, (list, tuple)) and out:
+            return out[0]
+        raise RuntimeError(f"Anima returned no image (got {type(out).__name__})")
 
 
 # --------------------------------------------------------------------- server
