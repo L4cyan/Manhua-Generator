@@ -74,6 +74,8 @@ SHEET_STYLE_STRIP = [
     "dramatic and ethereal vibe",
     "ethereal atmospheric lighting",
     "prominent rim lighting",
+    "soft dark brown or deep purple outlines instead of pure black",
+    "vibrant color rendering",
 ]
 
 
