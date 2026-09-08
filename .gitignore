@@ -18,8 +18,10 @@ workspace/
 config/characters.yaml
 config/project.yaml
 
-# Ad-hoc debugging scripts
-scripts/
+# Ad-hoc debugging scripts. Note the trailing /*: ignoring the directory
+# itself would stop git descending into it, and the negations below would
+# never be consulted.
+scripts/*
 
 # Cloned trainer, not ours to vendor
 tools/sd-scripts/
@@ -30,3 +32,9 @@ tools/sd-scripts/
 !scripts/clause_lab.py
 !scripts/hairline_ab.py
 !scripts/contact_sheet.py
+!scripts/render_style.py
+!scripts/build_strip.py
+!scripts/fetch_turbo.py
+!scripts/lora_qa.py
+!scripts/smoke_studio.py
+!scripts/concurrency_check.py

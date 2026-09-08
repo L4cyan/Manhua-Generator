@@ -1,0 +1,87 @@
+# ============================================================
+# STYLE LOCK -- "Grimgar of Fantasy and Ash" watercolour look.
+#
+# The opposite of the xianxia-premium-webtoon lock in almost every
+# respect, which is the point of having more than one: that style is
+# crisp, saturated and high-contrast; this one is soft, muted and
+# painterly, with visible paper texture and washed edges.
+#
+# Everything outside `style_lead` / `style_body` / `negative` is kept
+# identical to the default lock so the two are drop-in swappable --
+# same aspects, same sampler, same render settings.
+# ============================================================
+
+name: Watercolour
+version: 1
+
+# Front-loaded, short. "watercolour illustration" has to arrive early or
+# the model defaults to the cel-shaded anime look it has far more of.
+style_lead: >-
+  masterpiece, best quality, very aesthetic, absurdres, high resolution,
+  watercolour illustration, soft painterly anime art,
+  hand-painted light novel illustration
+
+registers:
+  cultivation: eastern fantasy setting, wuxia
+  modern: contemporary present day setting, real world, everyday modern clothing
+  neutral: ""
+
+# The bulk of the look. Muted, washed, textured -- and deliberately says
+# what it is NOT (no hard cel shading), because that is the single thing
+# an anime checkpoint will otherwise revert to.
+style_body: >-
+  delicate watercolour painting, visible watercolour washes and bleeds,
+  soft desaturated muted palette, dusty earth tones, pale sage green,
+  washed slate blue, warm ochre, faded rose,
+  gentle diffuse natural light, soft ambient shadows, no harsh contrast,
+  fine sketchy pencil linework, visible pencil underdrawing,
+  loose confident linework with broken edges, rough paper texture,
+  soft blended shading with no hard cel-shading edges,
+  muted skin tones, subtle blush, understated features,
+  gentle melancholic atmosphere, quiet naturalistic mood,
+  painterly backgrounds with soft focus and atmospheric depth,
+  colour bleeding softly past the linework, dry-brush texture
+
+# FX stay restrained. A watercolour world does not glow neon.
+style_fx: >-
+  soft luminous glow, faint drifting motes of light
+
+positive_suffix: >-
+  light novel illustration, traditional media, watercolour, detailed, soft focus
+
+# The negative carries most of the style separation: everything here is a
+# trait of the DEFAULT look, which the checkpoint reverts to unless pushed.
+negative: >-
+  cel shading, hard shadows, high contrast, saturated neon colours,
+  glossy, shiny, airbrushed, 3d render, digital gloss, vector art,
+  sharp crisp outlines, thick black outlines,
+  text, signature, watermark, username, jpeg artifacts,
+  deformed, mutated, ugly, disfigured, bad anatomy, bad hands,
+  missing fingers, extra digits, fewer digits, lowres, cropped,
+  (worst quality, bad quality:1.2), photorealistic, blurry,
+  speech bubble, border, panel border, letterbox
+
+render:
+  checkpoint: Illustrious-XL-v1.1.safetensors
+  sampler: euler_a
+  scheduler: karras
+  steps: 8
+  cfg: 1.5
+  clip_skip: 2
+  # No style LoRA: the manhwa LoRA would drag this straight back to the
+  # glossy webtoon look it is meant to be an alternative to.
+  style_lora: ""
+  style_lora_weight: 0.0
+
+hires:
+  enabled: true
+  scale: 1.5
+  denoise: 0.35
+  steps: 12
+
+aspects:
+  tall:       [832, 1216]
+  square:     [1024, 1024]
+  wide:       [1216, 832]
+  banner:     [1344, 768]
+  full_bleed: [832, 1216]

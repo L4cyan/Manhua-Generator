@@ -334,6 +334,150 @@ class ComfyBackend(Backend):
         rgba.putalpha(mask)
         return rgba
 
+
+    def refine(self, img: Image.Image, req: RenderRequest, denoise: float = 0.40,
+               name: str = "refine_src.png") -> Image.Image:
+        """Re-diffuse an existing image at partial strength (img2img).
+
+        This is what makes a composited panel stop looking composited. A
+        cut-out character pasted onto a plate has hard edges, its own lighting
+        and no contact with the ground; running the assembled panel back
+        through the sampler at ~0.4 denoise keeps the pose and the layout but
+        lets the model redraw the seams, relight the figure to match the scene,
+        and put a shadow where one belongs.
+
+        Denoise is the whole control: too low and the seams survive, too high
+        and the character stops being the character.
+        """
+        s = req.style.render
+        ref = self.upload_image(img, name)
+
+        if self.model_type == "anima":
+            g: dict[str, dict] = {
+                "unet": {"class_type": "UNETLoader",
+                         "inputs": {"unet_name": self.unet, "weight_dtype": "default"}},
+                "clip": {"class_type": "CLIPLoader",
+                         "inputs": {"clip_name": self.clip, "type": "qwen_image"}},
+                "vae": {"class_type": "VAELoader", "inputs": {"vae_name": self.vae}},
+            }
+            model_src: list = ["unet", 0]
+            for i, (lname, weight) in enumerate(req.loras):
+                node = f"lora{i}"
+                g[node] = {"class_type": "LoraLoaderModelOnly",
+                           "inputs": {"lora_name": lname, "strength_model": weight,
+                                      "model": model_src}}
+                model_src = [node, 0]
+            clip_src = ["clip", 0]
+            vae_src = ["vae", 0]
+        else:
+            g = {"ckpt": {"class_type": "CheckpointLoaderSimple",
+                          "inputs": {"ckpt_name": s.checkpoint}}}
+            model_src, clip_src, vae_src = ["ckpt", 0], ["ckpt", 1], ["ckpt", 2]
+
+        g.update({
+            "load": {"class_type": "LoadImage", "inputs": {"image": ref}},
+            "encode": {"class_type": "VAEEncode",
+                       "inputs": {"pixels": ["load", 0], "vae": vae_src}},
+            "pos": {"class_type": "CLIPTextEncode",
+                    "inputs": {"text": req.positive, "clip": clip_src}},
+            "neg": {"class_type": "CLIPTextEncode",
+                    "inputs": {"text": req.negative, "clip": clip_src}},
+            "sampler": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "seed": req.seed, "steps": s.steps, "cfg": s.cfg,
+                    "sampler_name": ("euler_ancestral" if self.model_type == "anima"
+                                     else _comfy_sampler(s.sampler)),
+                    "scheduler": "normal", "denoise": denoise,
+                    "model": model_src, "positive": ["pos", 0], "negative": ["neg", 0],
+                    "latent_image": ["encode", 0],
+                },
+            },
+            "decode": {"class_type": "VAEDecode",
+                       "inputs": {"samples": ["sampler", 0], "vae": vae_src}},
+            "save": {"class_type": "SaveImage",
+                     "inputs": {"filename_prefix": "manhua/refine", "images": ["decode", 0]}},
+        })
+        images = self._run_graph(g)
+        if not images:
+            raise RuntimeError("refine returned no image")
+        return images[0]
+
+
+    def hires(self, img: Image.Image, req: RenderRequest, scale_model: str =
+              "RealESRGAN_x4plus_anime_6B.pth", denoise: float = 0.28,
+              target_w: int = 0, target_h: int = 0,
+              name: str = "hires_src.png") -> Image.Image:
+        """Upscale then lightly re-diffuse, to clean artefacts and add detail.
+
+        Upscaling alone sharpens the mistakes along with everything else; a
+        short img2img pass afterwards is what actually repairs hands, melted
+        architecture and mushy repeated detail, because the model gets to
+        redraw them with more pixels to work in.
+
+        Denoise stays low (0.25-0.35 is the range that works for SDXL-class
+        models). Higher and it stops being the same panel.
+        """
+        s = req.style.render
+        ref = self.upload_image(img, name)
+        tw = target_w or int(img.width * 1.5)
+        th = target_h or int(img.height * 1.5)
+
+        if self.model_type == "anima":
+            g: dict[str, dict] = {
+                "unet": {"class_type": "UNETLoader",
+                         "inputs": {"unet_name": self.unet, "weight_dtype": "default"}},
+                "clip": {"class_type": "CLIPLoader",
+                         "inputs": {"clip_name": self.clip, "type": "qwen_image"}},
+                "vae": {"class_type": "VAELoader", "inputs": {"vae_name": self.vae}},
+            }
+            model_src: list = ["unet", 0]
+            for i, (lname, weight) in enumerate(req.loras):
+                node = f"lora{i}"
+                g[node] = {"class_type": "LoraLoaderModelOnly",
+                           "inputs": {"lora_name": lname, "strength_model": weight,
+                                      "model": model_src}}
+                model_src = [node, 0]
+            clip_src, vae_src = ["clip", 0], ["vae", 0]
+            sampler_name = "euler_ancestral"
+        else:
+            g = {"ckpt": {"class_type": "CheckpointLoaderSimple",
+                          "inputs": {"ckpt_name": s.checkpoint}}}
+            model_src, clip_src, vae_src = ["ckpt", 0], ["ckpt", 1], ["ckpt", 2]
+            sampler_name = _comfy_sampler(s.sampler)
+
+        g.update({
+            "load": {"class_type": "LoadImage", "inputs": {"image": ref}},
+            "upmodel": {"class_type": "UpscaleModelLoader",
+                        "inputs": {"model_name": scale_model}},
+            "upscale": {"class_type": "ImageUpscaleWithModel",
+                        "inputs": {"upscale_model": ["upmodel", 0], "image": ["load", 0]}},
+            # The ESRGAN model is fixed at 4x, so scale back to the size we want.
+            "resize": {"class_type": "ImageScale",
+                       "inputs": {"image": ["upscale", 0], "upscale_method": "lanczos",
+                                  "width": tw, "height": th, "crop": "disabled"}},
+            "encode": {"class_type": "VAEEncode",
+                       "inputs": {"pixels": ["resize", 0], "vae": vae_src}},
+            "pos": {"class_type": "CLIPTextEncode",
+                    "inputs": {"text": req.positive, "clip": clip_src}},
+            "neg": {"class_type": "CLIPTextEncode",
+                    "inputs": {"text": req.negative, "clip": clip_src}},
+            "sampler": {"class_type": "KSampler",
+                        "inputs": {"seed": req.seed, "steps": s.steps, "cfg": s.cfg,
+                                   "sampler_name": sampler_name, "scheduler": "normal",
+                                   "denoise": denoise, "model": model_src,
+                                   "positive": ["pos", 0], "negative": ["neg", 0],
+                                   "latent_image": ["encode", 0]}},
+            "decode": {"class_type": "VAEDecode",
+                       "inputs": {"samples": ["sampler", 0], "vae": vae_src}},
+            "save": {"class_type": "SaveImage",
+                     "inputs": {"filename_prefix": "manhua/hires", "images": ["decode", 0]}},
+        })
+        images = self._run_graph(g)
+        if not images:
+            raise RuntimeError("hires returned no image")
+        return images[0]
+
     # ---------- execution ----------
 
     def render(self, req: RenderRequest) -> Image.Image:

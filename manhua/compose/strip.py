@@ -151,22 +151,52 @@ def slice_for_upload(
     return chunks
 
 
+_FORMATS = {
+    "png": ("png", {}),
+    "jpg": ("jpg", {"format": "JPEG", "subsampling": 0, "optimize": True}),
+    "jpeg": ("jpg", {"format": "JPEG", "subsampling": 0, "optimize": True}),
+    "webp": ("webp", {"format": "WEBP", "method": 5}),
+}
+
+
 def export(
     strip: Image.Image,
     placements: list[PlacedPanel],
     cfg: CanvasCfg,
     out_dir: str | Path,
     stem: str = "episode",
+    fmt: str = "png",
+    quality: int = 92,
 ) -> list[Path]:
+    """Write the strip whole, plus upload-sized slices.
+
+    PNG is lossless and enormous; a 40,000px strip lands around 60MB, which
+    most hosts reject. JPEG at quality 92 with no chroma subsampling is what
+    scanlation sites actually run, and keeps the lettering crisp.
+    """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
+    ext, opts = _FORMATS.get(fmt.lower(), _FORMATS["png"])
+    if opts.get("format") in ("JPEG", "WEBP"):
+        opts = {**opts, "quality": max(1, min(100, quality))}
+    if opts.get("format") == "JPEG" and strip.mode != "RGB":
+        strip = strip.convert("RGB")
 
-    full = out / f"{stem}_full.png"
-    strip.save(full)
+    def save(img: Image.Image, path: Path) -> Path:
+        try:
+            img.save(path, **opts)
+            return path
+        except OSError:
+            # The previous file is open in a viewer. Write beside it rather
+            # than throwing away a finished render over a file handle.
+            alt = path.with_name(f"{path.stem}_new{path.suffix}")
+            img.save(alt, **opts)
+            print(f"  (previous file was locked; wrote {alt.name})")
+            return alt
 
-    written = [full]
+    written = [save(strip, out / f"{stem}_full.{ext}")]
     for i, chunk in enumerate(slice_for_upload(strip, placements, cfg), start=1):
-        p = out / f"{stem}_{i:03d}.png"
-        chunk.save(p)
-        written.append(p)
+        if opts.get("format") == "JPEG" and chunk.mode != "RGB":
+            chunk = chunk.convert("RGB")
+        written.append(save(chunk, out / f"{stem}_{i:03d}.{ext}"))
     return written

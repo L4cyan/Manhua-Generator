@@ -56,7 +56,12 @@ class Settings:
     vram_gb: float = 0.0
     low_vram: bool = True
     script_provider: str = "auto"        # auto | ollama | claude
+    # Empty picks the best installed model automatically. Set it to pin a
+    # specific one -- your own finetune, a bigger model, whatever is pulled.
     ollama_model: str = ""
+    # Where Ollama is listening. Leave blank to use OLLAMA_HOST or the
+    # default loopback address.
+    ollama_host: str = ""
     notes: list[str] = field(default_factory=list)
 
     @classmethod

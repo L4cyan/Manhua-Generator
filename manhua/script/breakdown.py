@@ -9,6 +9,7 @@ at the API boundary instead of producing half-broken panels downstream.
 from __future__ import annotations
 
 import os
+import re
 import textwrap
 
 from pydantic import BaseModel, Field
@@ -122,8 +123,13 @@ def story_to_panels(
         provider = provider or detected_provider
         model = model or detected_model
 
+    # Only real cast goes in the roster. Reusable crowd assets live in the
+    # bible for their art, but offering one to the storyboard model as a person
+    # who can appear in a scene got "student_mob" written into panel actions as
+    # a character standing opposite the protagonist.
+    cast = {cid: c for cid, c in bible.items() if getattr(c, "role", "cast") == "cast"}
     roster = "\n".join(
-        f"- {cid}: {c.name} ({c.sex}) - {c.appearance[:90]}" for cid, c in bible.items()
+        f"- {cid}: {c.name} ({c.sex}) - {c.appearance[:90]}" for cid, c in cast.items()
     ) or "- (no characters defined)"
 
     user = textwrap.dedent(
@@ -193,6 +199,33 @@ def _to_panels(
             for c in d.characters
             if c.id in bible
         ]
+
+        # Backfill the cast by reading the action text.
+        #
+        # Small local models reliably WRITE "Ling Yan steps onto the road" and
+        # then leave the characters array empty, which strips the identity lock
+        # out of the panel and lets the art drift. Name matching is
+        # deterministic, instant and does not care how good the model is, so it
+        # runs regardless rather than as a fallback.
+        named = {r.id for r in chars}
+        haystack = f"{d.action} {d.setting}".lower()
+        for cid, ch_ in bible.items():
+            if cid in named or getattr(ch_, "role", "cast") != "cast":
+                continue
+            # Match on the full name and the id, plus a first name only when
+            # it is distinctive. Taking the first token blindly matched "The"
+            # in "The Psionic Immortal" and put her in every panel containing
+            # the word "the".
+            stop = {"the", "a", "an", "lord", "lady", "master", "elder", "sir"}
+            aliases = {cid.replace("_", " "), ch_.name.lower()}
+            for tok in ch_.name.lower().split():
+                if len(tok) >= 4 and tok not in stop:
+                    aliases.add(tok)
+            # Whole-word matching, so "tam" does not fire inside "tamper".
+            if any(a and re.search(r"\b" + re.escape(a) + r"\b", haystack)
+                   for a in aliases):
+                chars.append(CharacterRef(id=cid))
+                named.add(cid)
 
         balloons = [
             Balloon(

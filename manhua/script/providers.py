@@ -21,7 +21,41 @@ from ..net import enable_system_certs
 
 enable_system_certs()
 
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+def _ollama_host() -> str:
+    """Resolve the Ollama base URL from the environment.
+
+    OLLAMA_HOST is overwhelmingly set as a *bind address* for the server --
+    "0.0.0.0", "0.0.0.0:11434" -- not as a client URL. Used verbatim that
+    produces "0.0.0.0/api/tags", which has no scheme and fails, and the failure
+    surfaces as "no script provider available" even though Ollama is running
+    perfectly well. Normalise it: add a scheme, and turn a wildcard bind into
+    a loopback address a client can actually connect to.
+    """
+    # workspace/settings.json wins over the environment, so a user can pin the
+    # host in the app without editing system variables.
+    raw = ""
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+        cfg = _Path("workspace/settings.json")
+        if cfg.exists():
+            raw = (_json.loads(cfg.read_text(encoding="utf-8")).get("ollama_host") or "").strip()
+    except Exception:
+        raw = ""
+    raw = raw or (os.environ.get("OLLAMA_HOST") or "").strip()
+    if not raw:
+        return "http://127.0.0.1:11434"
+    if "://" not in raw:
+        raw = "http://" + raw
+    scheme, _, rest = raw.partition("://")
+    hostport = rest.rstrip("/")
+    host, _, port = hostport.partition(":")
+    if host in ("0.0.0.0", "::", "[::]", ""):
+        host = "127.0.0.1"
+    return f"{scheme}://{host}:{port or '11434'}"
+
+
+OLLAMA_HOST = _ollama_host()
 CLAUDE_MODEL = os.environ.get("MANHUA_CLAUDE_MODEL", "claude-opus-5")
 
 # Ordered by how well they follow a constrained JSON schema. Small models are
@@ -58,9 +92,28 @@ def ollama_models(timeout: float = 12.0, retries: int = 2) -> list[str]:
     return []
 
 
+def configured_model() -> str:
+    """A model pinned in workspace/settings.json, if any."""
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+        cfg = _Path("workspace/settings.json")
+        if cfg.exists():
+            return (_json.loads(cfg.read_text(encoding="utf-8")).get("ollama_model") or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
 def pick_ollama_model(available: list[str] | None = None) -> str | None:
     """Choose the best available local model for structured breakdown."""
     available = available if available is not None else ollama_models()
+    pinned = configured_model()
+    if pinned:
+        # Honour the pin even if the tag is not listed: the user may have just
+        # pulled it, and a wrong name fails loudly rather than silently using
+        # something else.
+        return pinned
     if not available:
         return None
     for want in PREFERRED_OLLAMA:

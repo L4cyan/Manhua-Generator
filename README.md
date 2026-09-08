@@ -2,7 +2,10 @@
 
 Turn prose into a **vertical long-strip manhua** — with the art style, the cast, and the framing all locked down, so panel 200 still looks like panel 1.
 
-> **Status:** working alpha. The full pipeline runs end to end (workspace → breakdown → render → letter → compose → export). The mock backend needs no GPU, so you can try the whole thing in about a minute.
+> **Status:** working alpha, used daily on a real chapter. Paste prose, it reads
+> the cast out of it, storyboards it, renders it, letters it and exports the
+> strip. Everything runs on your own machine. The mock backend needs no GPU, so
+> you can try the whole thing in about a minute.
 
 ---
 
@@ -23,7 +26,19 @@ The drift gate is the part nobody else does, and it's what makes a 200-panel cha
 
 ---
 
-## Quick start (no GPU needed)
+## Quick start
+
+On Windows, double-click **`start.bat`**. That is the whole install:
+
+1. builds the virtualenv and installs dependencies, once
+2. finds ComfyUI and **starts it** with `--lowvram` if it is not already up
+3. checks Ollama has a script model, and says what to do if not
+4. opens the studio at <http://127.0.0.1:7860>
+
+Anything it cannot fix it tells you about at startup, rather than letting you
+discover it as a red dot in the corner an hour later.
+
+Prefer to drive it yourself:
 
 ```bash
 git clone https://github.com/L4cyan/Manhua-Generator.git
@@ -31,13 +46,23 @@ cd Manhua-Generator
 python -m venv .venv && .venv/Scripts/activate      # Windows
 pip install -r requirements.txt
 
-python -m manhua.cli new "My Story"
-python -m manhua.cli studio --backend mock
+python -m manhua.launch                 # the same thing start.bat runs
+python -m manhua.cli studio --backend mock   # or: no GPU, no models
 ```
 
-On Windows you can just double-click **`start.bat`** — it builds the venv on first run and opens the studio.
+The `mock` backend draws prompt cards instead of art, so you can exercise the
+storyboard, lettering, layout and export without downloading a single model.
 
-The browser opens on the workspace. The `mock` backend draws prompt cards instead of art, so you can exercise the layout, lettering, and export without downloading a single model.
+### What it needs
+
+| For | Install | Notes |
+|---|---|---|
+| The script (cast, storyboard, revisions) | [Ollama](https://ollama.com) + `ollama pull qwen2.5:7b` | runs locally, ~5 GB |
+| The art | [ComfyUI](https://github.com/comfyanonymous/ComfyUI/releases/latest) | started for you if installed |
+| Nothing at all | — | `--backend mock` |
+
+`qwen2.5:7b` is the measured pick: a thinking model burns tokens reasoning
+about what is really schema-filling, and came out both slower and no better.
 
 ---
 
@@ -51,7 +76,7 @@ the same panel on any of them.
 |---|---|---|---|
 | `native` | Your GPU, in-process | ~230 s/panel @ 6 GB | `requirements-local.txt` |
 | `remote` | Free Kaggle/Colab GPU | ~25 s/panel | [notebook worker](kaggle/README.md) |
-| `comfy` | A running ComfyUI | ~60 s/panel | ComfyUI on `:8188` |
+| `comfy` | A running ComfyUI | ~19 s/panel | ComfyUI on `:8188` |
 | `mock` | Nothing — prompt cards | instant | nothing |
 
 Set it in `workspace/settings.json`, or per command with `--backend`.
@@ -150,7 +175,20 @@ part of the identity lock.
 
 ## How you actually use it
 
-The studio is built around one loop, because batch-generating a whole chapter and *then* looking at it gives you a hundred panels of drift and no leverage:
+**New project** takes over the window and walks four steps:
+
+| Step | What happens |
+|---|---|
+| **Project** | Name it, pick the art style. |
+| **Chapter** | Paste the prose. Reopening this step shows what is already there, so it is where you edit it too. Scene breaks written `<<----------->>` are honoured. |
+| **Cast** | *Extract characters* reads the chapter and proposes everyone in it, with an appearance precise enough to draw twice. Edit the cards, mark crowd roles as **Extra**, save. |
+| **Storyboard** | *Break down into panels* turns the prose into panels, one scene at a time, with a running log so a slow model looks slow rather than hung. |
+
+Both language steps are separate buttons on purpose: the cast is the identity
+lock every later prompt inherits, and it is worth a human glance before a
+hundred panels are built on it.
+
+Then the editor. It is built around one loop, because batch-generating a whole chapter and *then* looking at it gives you a hundred panels of drift and no leverage:
 
 ```
 paste a scene  →  review the panels as TEXT  →  render one beat
@@ -160,12 +198,23 @@ paste a scene  →  review the panels as TEXT  →  render one beat
 
 You're never more than a beat away from a course correction. Per panel you can:
 
-- **↻ Reroll** — new seed, same prompt
-- **✎ Edit** — change shot, framing, action, lighting, FX. Re-renders at the **same seed** on purpose, so you see what the *wording* changed rather than confounding it with a whole new composition
-- **🔒 Lock** — mark a panel final. Locked panels are never re-rendered by anything
-- **✕ Delete**
+- **Reroll** — new seed, same words. For when the description is right and the composition simply came out badly.
+- **Edit** — two modes. *Simple* takes a plain sentence ("make it night, pull the camera back") and applies it. *Advanced* is every field: shot, aspect, world, action, setting, lighting, camera, FX, who is in it, and the dialogue with its kind. Both re-render at the **same seed** on purpose, so you see what the *wording* changed rather than confounding it with a whole new composition.
+- **Lock** — mark a panel final. Locked panels are never re-rendered by anything.
+- **Delete**
 
 Editing the breakdown as text before rendering is the cheapest iteration in the pipeline. Use it.
+
+### Dialogue
+
+The **Dialogue** toggle letters the strip in place, using the same letterer that
+exports, so what is on screen is what ships. Drag a balloon to move it; the
+handle's tail button points a tail at whoever is speaking. Nothing is placed
+automatically: an auto-placed tail aims at the busiest part of the panel, which
+silently reassigns a line to whoever happens to be in frame.
+
+**Export** writes the full strip plus upload-sized slices, cut on gutters so a
+panel is never sliced in half. PNG, JPG or WEBP.
 
 ---
 
@@ -176,7 +225,8 @@ Everything is plain files — portable, diffable, and nothing trapped in a datab
 ```
 workspace/
   styles/
-    xianxia-premium-webtoon.yaml    shared style locks
+    watercolour.yaml                shared style locks (this is the default)
+    xianxia-premium-webtoon.yaml
   projects/
     my-story/
       project.json                  name, description, chosen style
@@ -264,17 +314,23 @@ Produces `ch001_full.png` (the whole strip) plus numbered upload slices capped a
 
 ```
 manhua/
+  launch.py        Dependency checks, starts ComfyUI, opens the studio
   models.py        Panel / Character / Chapter schema — the contract between stages
   config.py        Style lock loading + prompt assembly
-  workspace.py     Projects, chapters, style library
-  script/          Prose → panels (Claude, schema-validated)
+  workspace.py     Projects, chapters, style library, atomic saves
+  script/          cast.py (prose → characters), breakdown.py (prose → panels),
+                   revise.py (a sentence → an edited panel). Schema-validated.
   render/          Backend interface + ComfyUI adapter + mock
   bible/           Turnaround sheets + LoRA training configs
   qa/              CLIP drift detection
-  letter/          Balloon drawing + auto-placement
+  letter/          Balloon drawing and placement
   compose/         Long-strip assembly + gutter-snapped slicing
   studio/          FastAPI server + no-build-step web UI
 ```
+
+The UI is one HTML file with no build step, no framework and no CDN: it has to
+work with the internet off, and a toolbar of missing glyphs is worse than any
+download it would save.
 
 Adding a backend means implementing one method (`Backend.render`). The rest of the pipeline doesn't change.
 
@@ -282,11 +338,12 @@ Adding a backend means implementing one method (`Backend.render`). The rest of t
 
 ## Roadmap
 
+- [x] Drag-to-place balloons in the studio
+- [ ] Inpainting: mask a region, describe the fix, keep the rest of the panel
 - [ ] ControlNet pose/depth for directed framing
-- [ ] Drag-to-place balloons in the studio
 - [ ] Panel reordering by drag
+- [ ] A LoRA training tab: add a character, generate a sheet, cull, train
 - [ ] Multi-character scene composition (regional prompting)
-- [ ] Style transfer from reference images
 
 ---
 

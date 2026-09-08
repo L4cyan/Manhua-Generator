@@ -20,9 +20,13 @@ diffable, and nothing is trapped in a database):
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 import shutil
+import threading
+import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,7 +41,76 @@ from .models import Character, Panel
 from .render.base import Backend, build_request
 
 WORKSPACE = Path("workspace")
-DEFAULT_STYLE = "xianxia-premium-webtoon"
+
+# Style locks that ship with the app, seeded into the workspace on first run.
+# The watercolour lock is the default: it is the one that survived side-by-side
+# comparison on a whole chapter, and the crisp saturated webtoon look is kept
+# as the alternative rather than the baseline.
+SHIPPED_STYLES = {
+    "watercolour": Path("config/style-watercolour.yaml"),
+    "xianxia-premium-webtoon": Path("config/style.yaml"),
+}
+DEFAULT_STYLE = "watercolour"
+
+
+# One lock per file on disk. The studio saves from several threads at once --
+# dragging a balloon patches a panel while the browser is still fetching others
+# -- and two writers of the same file corrupt it.
+_LOCKS: dict[Path, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_for(path: Path) -> threading.Lock:
+    key = path.resolve()
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(key, threading.Lock())
+
+
+def save_json(path: Path, payload: dict) -> None:
+    """Write JSON so a reader never sees a half-written file.
+
+    The obvious version of this -- write `chapter.tmp`, then replace -- is not
+    enough, because the temp NAME is shared. Two concurrent saves both open
+    `chapter.tmp`; the longer one writes 80KB, the shorter truncates and writes
+    65KB, and the tail of the first survives past the end of the second. The
+    replace then publishes that. It produced a `chapter.json` with 26 bytes of
+    a previous save stuck on the end, and every read of the chapter failed
+    afterwards, which showed up as panels vanishing from the editor.
+
+    So: a unique temp name per write, and a lock so saves of one file are
+    serialised rather than interleaved.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _lock_for(path):
+        tmp = path.with_name(f"{path.stem}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+        try:
+            tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False),
+                           encoding="utf-8")
+            # Windows refuses to rename over a file another process has open,
+            # so a reader outside this process (an editor, a sync client) makes
+            # the replace fail rather than the write corrupt. Readers hold the
+            # file for microseconds; retry briefly instead of losing the save.
+            for attempt in range(40):
+                try:
+                    os.replace(tmp, path)
+                    break
+                except PermissionError:
+                    if attempt == 39:
+                        raise
+                    time.sleep(0.02)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+
+def load_json(path: Path) -> dict:
+    """Read JSON under the same lock the writer takes.
+
+    Within this process that removes the read/replace race entirely, which
+    matters because the studio serves several requests per balloon drag and
+    each one loads the chapter.
+    """
+    with _lock_for(path):
+        return json.loads(path.read_text(encoding="utf-8"))
 
 
 def slug(s: str) -> str:
@@ -99,9 +172,7 @@ class Chapter:
             "panels": [p.model_dump(mode="json") for p in self.panels],
             "status": {k: vars(v) for k, v in self.status.items()},
         }
-        tmp = self.file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(self.file)
+        save_json(self.file, payload)
         self.project.touch()
 
     @classmethod
@@ -109,7 +180,7 @@ class Chapter:
         ch = cls(project=project, number=number)
         if not ch.file.exists():
             return ch
-        raw = json.loads(ch.file.read_text(encoding="utf-8"))
+        raw = load_json(ch.file)
         ch.title = raw.get("title", "")
         ch.source_story = raw.get("source_story", "")
         ch.panels = [Panel.model_validate(p) for p in raw.get("panels", [])]
@@ -237,24 +308,17 @@ class Project:
     def save(self) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.updated = now()
-        self.file.write_text(
-            json.dumps(
-                {
-                    "id": self.id,
-                    "name": self.name,
-                    "description": self.description,
-                    "style_id": self.style_id,
-                    "style_addendum": self.style_addendum,
-                    "created": self.created,
-                    "updated": self.updated,
-                    "canvas": vars(self.canvas),
-                    "lettering": self.lettering,
-                },
-                indent=2,
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
+        save_json(self.file, {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "style_id": self.style_id,
+            "style_addendum": self.style_addendum,
+            "created": self.created,
+            "updated": self.updated,
+            "canvas": vars(self.canvas),
+            "lettering": self.lettering,
+        })
 
     def touch(self) -> None:
         self.updated = now()
@@ -338,11 +402,21 @@ class Workspace:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
-    def seed_default_style(self, source: Path = Path("config/style.yaml")) -> None:
-        """Copy the shipped style lock into the workspace on first run."""
-        target = self.style_dir / f"{DEFAULT_STYLE}.yaml"
-        if not target.exists() and source.exists():
-            shutil.copy(source, target)
+    def seed_default_style(self, source: Path | None = None) -> None:
+        """Copy the shipped style locks into the workspace on first run.
+
+        Only fills in what is missing. An edited workspace copy is never
+        overwritten, which is also why editing the config source alone leaves a
+        running project on the old text.
+        """
+        for sid, src in SHIPPED_STYLES.items():
+            target = self.style_dir / f"{sid}.yaml"
+            if not target.exists() and src.exists():
+                shutil.copy(src, target)
+        if source is not None and source.exists():
+            target = self.style_dir / f"{DEFAULT_STYLE}.yaml"
+            if not target.exists():
+                shutil.copy(source, target)
 
     def list_styles(self) -> list[dict]:
         self.seed_default_style()
@@ -385,7 +459,7 @@ class Workspace:
         return sorted(out, key=lambda p: p.updated, reverse=True)
 
     def load_project(self, pid: str) -> Project:
-        raw = json.loads((self.project_dir / pid / "project.json").read_text(encoding="utf-8"))
+        raw = load_json(self.project_dir / pid / "project.json")
         return Project(
             ws=self,
             id=raw["id"],

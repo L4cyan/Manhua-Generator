@@ -3,6 +3,7 @@ script breakdown emits it, the renderer consumes it, the compositor lays it out.
 """
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Literal
 
@@ -43,6 +44,45 @@ SHOT_TOKENS: dict[Shot, str] = {
     Shot.reaction: "upper body, face focus, expressive",
 }
 
+# How big the character should be IN THE FRAME, said in plain words.
+#
+# `Shot.wide` is a label; it tells the model nothing about scale. Anima's text
+# encoder is a language model, not CLIP, so it reads a sentence about how much
+# of the picture a person occupies far better than it reads a tag. Stating the
+# fraction explicitly is the difference between "wide shot" (which came back as
+# a portrait) and "the figure occupies about half the frame height".
+#
+# Say what the environment is doing too: "the environment fills most of the
+# image" gives the model something to draw INSTEAD of a face.
+SHOT_SCALE: dict[Shot, str] = {
+    Shot.establishing:
+        "the character is a tiny distant figure occupying roughly one tenth of the "
+        "frame height, the environment fills almost the entire image, seen from very "
+        "far away",
+    Shot.wide:
+        "the whole figure is visible from head to toe and occupies about half the "
+        "frame height, with the environment visible all around them, camera well back",
+    Shot.full:
+        "the figure stands head to toe filling about four fifths of the frame height, "
+        "with clear space above the head and below the feet",
+    Shot.medium:
+        "the figure is framed from the knees upward and fills the frame vertically, "
+        "the background still clearly visible behind them",
+    Shot.over_shoulder:
+        "seen past the shoulder of a foreground figure, the subject at conversational "
+        "distance, framed from the waist up",
+    Shot.pov:
+        "a first-person view of the scene, no subject in the near foreground",
+    Shot.close:
+        "the head and shoulders fill the frame",
+    Shot.extreme_close:
+        "a single facial feature fills the entire frame",
+    Shot.reaction:
+        "head and shoulders fill the frame, the expression is the subject",
+    Shot.insert:
+        "a single object fills the frame, no person present",
+}
+
 # Tags pushed into the NEGATIVE prompt per shot, to fight the portrait bias.
 # Without these an "establishing" panel still returns a face filling the frame.
 SHOT_NEGATIVES: dict[Shot, str] = {
@@ -69,9 +109,9 @@ SHOT_DISTANCE: dict[Shot, str] = {
     Shot.establishing: "far",
     Shot.wide: "far",
     Shot.full: "far",
-    Shot.medium: "mid",
-    Shot.over_shoulder: "mid",
-    Shot.pov: "mid",
+    Shot.medium: "far",
+    Shot.over_shoulder: "far",
+    Shot.pov: "far",
     Shot.close: "near",
     Shot.extreme_close: "near",
     Shot.reaction: "near",
@@ -117,11 +157,31 @@ class Balloon(BaseModel):
 
     kind: BalloonKind = "speech"
     speaker: str | None = None
+    # False when the speaker is not visible in this panel -- a voice from
+    # offscreen, a god speaking out of a light. Such a balloon must not grow a
+    # tail: a tail points at a mouth, and pointing it at whoever IS in frame
+    # silently reassigns the line to them. This is exactly how "I've found you,
+    # my inheritor" ended up reading as the protagonist's own line.
+    in_panel: bool = True
+    # Manual tail target, normalised 0-1 within the panel. None means NO tail.
+    # Tails are not placed automatically any more: the auto-placer aimed at the
+    # busiest region of the panel, which is a decent guess and a bad default --
+    # it produced stray triangles pointing at scenery, and it silently
+    # attributed lines to whoever happened to be in frame. The editor sets
+    # these by clicking.
+    tail_x: float | None = None
+    tail_y: float | None = None
     text: str
     # 0.0-1.0 normalised anchor inside the panel. None = auto-place into the
     # lowest-detail region (see letter.balloon.auto_anchor).
     x: float | None = None
     y: float | None = None
+    # How wide to wrap this one, as a fraction of the panel. None = the style
+    # default. A balloon is always sized from its text, so this is the handle
+    # on the SHAPE: the same line reads as a tall column or a wide bar
+    # depending on where it wraps, and only a person can say which suits the
+    # art underneath it.
+    width: float | None = None
 
 
 class SFX(BaseModel):
@@ -163,6 +223,9 @@ class Panel(BaseModel):
     # the canvas edges. Together they are what stop a chapter reading as a
     # stack of identical rectangles.
     pause: str = "normal"
+    # Overrides SHOT_SCALE when a panel needs a scale its shot type does not
+    # imply -- "he is a speck at the bottom of the frame", say.
+    figure_scale: str = ""
     inset: float = 0.0
     # Unnamed people who are not in the bible (a lecture hall, a crowd).
     # Keeps `no humans` off panels that clearly contain people.
@@ -189,13 +252,17 @@ class Panel(BaseModel):
             shot_tokens = ", ".join(p.strip() for p in shot_tokens.split(",") if p.strip())
             shot_tokens = f"{shot_tokens}, crowd, many people, group of people"
             if self.extras_style == "faceless":
-                shot_tokens += (", faceless, faceless male, faceless female, "
-                                "featureless faces, blank faces, no facial features, "
-                                "background characters, seen from behind")
+                shot_tokens += (", seen from behind, backs of heads, rows of people, "
+                                "a full room of people, background characters, "
+                                "faces turned away, indistinct distant faces")
             elif self.extras_style == "silhouette":
                 shot_tokens += (", silhouette, dark silhouettes, backlit figures, "
                                 "featureless shapes, no facial features")
         parts: list[str] = [shot_tokens]
+        # Say the figure scale in plain words, not just the shot tag.
+        scale = self.figure_scale or SHOT_SCALE.get(self.shot, "")
+        if scale:
+            parts.append(scale)
 
         if self.camera:
             parts.append(self.camera)
@@ -213,7 +280,20 @@ class Panel(BaseModel):
         if n == 1:
             parts.append("1girl" if bible.get(self.characters[0].id, _UNKNOWN).sex == "female" else "1boy")
         elif n > 1:
-            parts.append(f"{n} people")
+            # Danbooru counts by sex: 2boys, 1boy 1girl, 2girls. "2 people" is
+            # not a tag the model knows, and each character's appearance string
+            # begins with its own "1boy", so a two-hander used to assert one
+            # male twice while also claiming two people. The count tags are
+            # stripped from the individual descriptions below.
+            males = sum(1 for r in self.characters
+                        if bible.get(r.id, _UNKNOWN).sex != "female")
+            females = n - males
+            bits = []
+            if males:
+                bits.append("1boy" if males == 1 else f"{males}boys")
+            if females:
+                bits.append("1girl" if females == 1 else f"{females}girls")
+            parts.append(", ".join(bits))
         elif self.extras:
             # People who are not in the bible: a lecture hall of students, a
             # crowd in a square. They still need a count tag, and they must NOT
@@ -243,8 +323,13 @@ class Panel(BaseModel):
             char = bible.get(ref.id)
             if char is None:
                 continue
-            parts.append(char.appearance_prompt(
-                ref, world=self.world, distance=SHOT_DISTANCE.get(self.shot, "near")))
+            desc = char.appearance_prompt(
+                ref, world=self.world, distance=SHOT_DISTANCE.get(self.shot, "near"))
+            if n > 1:
+                # Drop the per-character count tag; the scene-level one above
+                # is the only one that should speak for the whole panel.
+                desc = re.sub(r"(?:(?<=^)|(?<=, ))(1boy|1girl)(?:, |$)", "", desc)
+            parts.append(desc)
 
         if self.lighting:
             parts.append(self.lighting)
@@ -293,6 +378,14 @@ class Character(BaseModel):
     lora: str | None = None
     lora_weight: float = 0.8
     trigger: str | None = Field(default=None, description="LoRA activation token")
+
+    # "cast" is a real character the storyboard may reference by id.
+    # "extra" is a reusable asset -- a faceless mob, a crowd filler -- that
+    # lives in the bible for its art but must never be offered to the
+    # storyboard model as someone who can appear in a scene. Leaving the
+    # crowd asset in the roster got it written into panel actions as a
+    # character standing opposite the protagonist.
+    role: str = "cast"
 
     # Path to the turnaround sheet used as the QA drift reference.
     sheet_dir: str | None = None
