@@ -85,15 +85,48 @@ SYSTEM = textwrap.dedent(
     - `action` describes only what a reader can SEE. Never write interiority
       ("he realises", "she remembers") - convert it to a visible expression
       or gesture, or move it into a `narration` balloon.
-    - Do NOT describe a character's permanent appearance (hair, eyes, build,
-      clothing). That is supplied automatically from the character bible, and
-      repeating it causes the art to drift. Only describe expression, pose,
-      and gaze.
+    - NEVER describe a character's permanent appearance in `action`: no hair,
+      no eye colour, no skin, no build, no clothing. All of that is supplied
+      automatically from the character bible, and a second, looser copy of it
+      in the action FIGHTS the bible and wins about half the time, which is
+      what makes a character change face between panels.
+
+      Wrong: "He stumbles to the mirror, his reflection showing a young man
+      with long black hair, pale skin and sharp eyebrows."
+      Right: "He stumbles to the mirror and stares at his reflection, eyes
+      wide."
+
+      Expression, pose, gaze and what they are physically doing: yes. What
+      they permanently look like: never.
+    - Name the character in `action` whenever it is about them. "He stumbles"
+      tells the renderer nothing about who is in the panel; "Lin Mo stumbles"
+      does.
+    - EVERY character in EVERY panel gets an `expression` and a `pose`. This is
+      not optional and it is not decoration: a character with neither is drawn
+      standing still with a blank face, and a page of those is a page of
+      nothing happening.
+
+      `expression` is the face doing something specific. "eyes wide, mouth
+      slightly open", "one brow raised, mouth flat", "jaw tight, staring past
+      him". Not "calm", not "neutral", not "shocked" on its own.
+
+      `pose` is the whole body. Say what the weight is doing and what the hands
+      are doing. "half risen from the floor, one hand braced on the boards, the
+      other clutching his head", "leaning back against the doorframe, arms
+      folded, one ankle crossed over the other". Not "standing".
+
+      Vary them. If the last panel had someone standing and staring, this one
+      does not.
+
     - `fx` is for visible effects: qi auras, sword glow, shattering stone,
       drifting petals.
     - Keep dialogue short. Long lines need large balloons that cover the art.
       Split a long speech across consecutive panels instead.
-    - `system` balloons are for cultivation-genre status windows.
+    - `system` balloons are cultivation status windows, and the window itself is
+      DRAWN FOR YOU from the balloon. Put the message in a `system` balloon and
+      NEVER describe the window in `action`. Writing "a blue notification screen
+      appears showing a message" makes the artist draw their own screen full of
+      unreadable scribble on top of the real one.
 
     Return 4-8 panels unless the passage clearly needs more.
     """
@@ -211,6 +244,147 @@ def _clean_balloon(text: str, bible: dict[str, Character]) -> tuple[str, str, st
     if bracketed or t.lower().startswith(_SYSTEM_STARTS):
         kind = "system"
     return t, kind, speaker
+
+
+# Permanent traits. If one of these turns up in an `action` it came from the
+# model describing the character instead of what they are doing, and it fights
+# the identity lock: the bible says "long black hair, centre-parted, low tail",
+# the action says "long black hair", and the loose version wins as often as not.
+_LOOK_NOUNS = (
+    "hair", "skin", "complexion", "eyebrow", "brow", "freckle", "build",
+    "physique", "stature", "jawline", "cheekbone", "beard", "moustache",
+)
+# "his brown eyes" is identity. "eyes wide" is an expression and must survive,
+# and so must "a golden eye in the heavens" -- an early version matched any
+# colour next to "eye" and deleted the SUBJECT of a panel, leaving "revealing a
+# in the heavens". A possessive is required: it is a character trait only when
+# it belongs to somebody, and the whole phrase goes, not half of it.
+_LOOK_EYES = re.compile(
+    r"[,;]?\s*\b(?:his|her|their|its|with)\s+"
+    r"(?:dark|pale|light|deep|bright|black|brown|blue|green|gr[ea]y|amber|"
+    r"hazel|golden|violet|red|silver)(?:[\w-]+\s+){0,2}eyes\b"
+    r"(?:\s+(?:\w+\s+){0,3}?(?=[,.;]|$))?", re.I)
+
+# A status window is LETTERED by us, from a `system` balloon, with real text in
+# a real font. Describing one in the action makes the image model draw its own:
+# a blue rectangle full of glyph-shaped noise, over the art.
+# Only the window's own clause is removed, not the sentence around it: "Lin Mo
+# steps back as a blue system window opens in front of him, one hand raised"
+# has to keep the stepping back and the raised hand.
+_UI_SENTENCE = re.compile(
+    r"\b(?:a|an|the)?\s*(?:[\w-]+\s+){0,3}?"
+    r"(?:notification|status|system)\s+"
+    r"(?:screen|window|panel|box|message|prompt|display|interface)\b"
+    r"[^,.;!?]*", re.I)
+_UI_TRAILING = re.compile(
+    r"[^.!?]*\bthe (?:screen|window|panel)\s+(?:shows|displays|reads|says)\b"
+    r"[^.!?]*[.!?]?", re.I)
+# What is left after cutting a clause out of the middle of a sentence.
+_DANGLE = re.compile(
+    r"\s*\b(?:as|while|when|and|with|showing|then|at|to|toward|towards|"
+    r"back at|down at|up at|over at|into|onto)\b\s*(?=[,.;!?]|$)", re.I)
+
+_WITH_LOOK = re.compile(
+    r"[,;]?\s*\b(?:with|having|showing|revealing)\s+[^.;]*?"
+    r"(?:" + "|".join(_LOOK_NOUNS) + r")[^.;]*", re.I)
+
+# Pronouns that mean "the person already established", which is exactly what a
+# name matcher cannot see.
+_PRONOUN = re.compile(
+    r"\b(?:he|him|his|she|her|hers|they|them|their|himself|herself|themselves)\b"
+    # "A handsome face is seen in a mirror" is a person. Adjectives are allowed
+    # between the article and the noun, or the commonest phrasing never matches.
+    r"|\b(?:the|a|an|his|her)\s+(?:[\w-]+\s+){0,2}"
+    r"(?:face|figure|reflection|silhouette|hands?)\b",
+    re.I)
+
+
+def strip_appearance(action: str) -> str:
+    """Take permanent appearance back out of an action line.
+
+    The prompt forbids it and the model does it anyway, roughly one panel in
+    eight. Deleting it deterministically is better than asking again: the
+    bible's description is the one that has to win, and it only wins if it is
+    the only one in the prompt.
+    """
+    if not action.strip():
+        return action
+
+    text = _UI_TRAILING.sub("", action)
+    text = _UI_SENTENCE.sub("", text)
+    had_ui = text.strip() != action.strip()
+    if had_ui:
+        text = _DANGLE.sub("", text)
+        text = re.sub(r",\s*,", ",", text)
+        text = re.sub(r"\s+([,.;])", r"\1", text)
+    text = _WITH_LOOK.sub("", text)
+    text = _LOOK_EYES.sub("", text)
+
+    out = []
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        clauses = [c.strip() for c in sentence.split(",")]
+        kept = []
+        for c in clauses:
+            low = c.lower()
+            has_look = any(n in low for n in _LOOK_NOUNS)
+            # A clause with no verb that names a permanent trait is a
+            # description, not an action. "pale skin" goes; "he pushes the hair
+            # out of his eyes" stays.
+            if has_look and not re.search(
+                    r"\b(is|are|was|were|has|have|stands?|sits?|turns?|looks?|"
+                    r"pushes?|brushes?|falls?|whips?|streams?|clutch\w*|grips?|"
+                    r"holds?|moves?|steps?|walks?|runs?|leans?)\b", low):
+                continue
+            if c:
+                kept.append(c)
+        s = ", ".join(kept).strip(" ,")
+        if s:
+            out.append(s if s.endswith((".", "!", "?")) else s + ".")
+
+    cleaned = " ".join(out)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,.")
+    if cleaned:
+        return cleaned + "."
+    # Nothing survived. When the whole action was a description of a status
+    # window, handing the original back would put the drawn screen straight
+    # into the prompt again, so give the panel the only thing that is actually
+    # meant to be visible: the person reacting to it. The window itself is
+    # lettered from the balloon.
+    if had_ui:
+        return ("eyes fixed on something bright hanging in the air in front of "
+                "them, head tilted slightly back")
+    # Otherwise a stray adjective is better than a panel with nothing to draw.
+    return action.strip()
+
+
+def inherit_cast(panels: list[Panel]) -> list[Panel]:
+    """Give pronoun-only panels the cast of the panel before them.
+
+    "He stumbles towards the mirror" names nobody, so name matching finds
+    nobody, so the panel renders with no identity lock at all and the model
+    draws a stranger. Nine panels of forty-one in one chapter. Whoever the
+    scene was just about is the right answer, and it is the answer a reader
+    assumes too.
+    """
+    for i, p in enumerate(panels):
+        if p.characters or not _PRONOUN.search(p.action):
+            continue
+        # Backwards first, then forwards, and never across a beat boundary: a
+        # new scene may be about a different person entirely. Forwards matters
+        # because a scene often OPENS on a face -- "a handsome face is seen in
+        # a mirror" -- and there is nothing behind it to inherit from.
+        for pool in (reversed(panels[:i]), panels[i + 1:]):
+            found = None
+            for other in pool:
+                if other.beat != p.beat:
+                    break
+                if other.characters:
+                    found = other
+                    break
+            if found:
+                p.characters = [CharacterRef(id=r.id) for r in found.characters]
+                break
+    return panels
 
 
 def pace(panels: list[Panel]) -> list[Panel]:
@@ -353,7 +527,7 @@ def _to_panels(
                 shot=shot,
                 aspect=aspect,  # type: ignore[arg-type]
                 characters=chars,
-                action=d.action,
+                action=strip_appearance(d.action),
                 setting=d.setting,
                 lighting=d.lighting,
                 camera=d.camera,
@@ -364,4 +538,4 @@ def _to_panels(
             )
         )
 
-    return pace(panels)
+    return pace(inherit_cast(panels))
