@@ -567,6 +567,34 @@ def create_app(workspace_root: str = "workspace", backend: str = "comfy",
 
         return vars(worker.submit("rerender", len(targets), run))
 
+    @app.post("/api/projects/{pid}/chapters/{n}/scrap")
+    def scrap(ch: Chapter = Depends(get_chapter)) -> dict:
+        """Throw the whole storyboard away and start the chapter over.
+
+        For when the cast or the scenes changed enough that patching panel by
+        panel is worse than re-breaking the prose. The prose itself is kept:
+        it is the thing that was typed by hand.
+
+        The art is moved aside rather than deleted. A chapter of panels is
+        hours of GPU time and this is a button someone will press by accident.
+        """
+        import shutil
+        from datetime import datetime, timezone
+
+        n_panels, n_art = len(ch.panels), 0
+        src = ch.dir / "panels"
+        moved = ""
+        if src.exists() and any(src.iterdir()):
+            stamp = f"{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
+            dest = ch.dir / f"panels_scrapped_{stamp}"
+            n_art = len(list(src.glob("*.png")))
+            shutil.move(str(src), str(dest))
+            moved = str(dest.resolve())
+
+        ch.panels, ch.status = [], {}
+        ch.save()
+        return {"ok": True, "panels": n_panels, "images": n_art, "moved_to": moved}
+
     @app.get("/api/projects/{pid}/chapters/{n}/stale")
     def stale(cast_only: bool = True, ch: Chapter = Depends(get_chapter)) -> dict:
         """How many panels a re-render would touch, for the confirmation."""
@@ -715,6 +743,7 @@ def create_app(workspace_root: str = "workspace", backend: str = "comfy",
     @app.post("/api/projects/{pid}/chapters/{n}/breakdown")
     def breakdown(req: BreakdownReq, ch: Chapter = Depends(get_chapter)) -> dict:
         from ..script.breakdown import story_to_panels
+        from ..script.scene import dress
 
         if not ch.project.bible:
             raise HTTPException(
@@ -755,6 +784,12 @@ def create_app(workspace_root: str = "workspace", backend: str = "comfy",
                     start_index=len(ch.panels) + 1,
                     target_panels=per,
                 )
+                # Second pass: the breakdown decides what happens, this decides
+                # where. Once per scene, so ten panels share one room instead of
+                # drifting through ten rooms that sound alike.
+                job.detail = f"scene {k + 1} of {len(chunks)}: dressing the set"
+                dress(chunk, panels)
+
                 # Panel ids are chapter-scoped; the breakdown numbers per episode.
                 for i, p in enumerate(panels, start=len(ch.panels) + 1):
                     p.id = f"c{ch.number:03d}_p{i:03d}"

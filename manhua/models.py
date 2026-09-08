@@ -134,6 +134,39 @@ _FACE_WORDS = (
 )
 
 
+# Clauses worth weighting inside an appearance string. Hair is the single
+# strongest recognition cue in this art style and the first thing to drift, so
+# it gets the emphasis while eye colour and build stay at their natural weight.
+_HAIR_WORDS = ("hair", "bangs", "fringe", "ponytail", "braid", "topknot",
+               "sidelock", "sideburn", "hairline", "curls", "queue", "bun")
+
+
+def _emphasise(text: str, weight: float, hair_only: bool = False) -> str:
+    """Wrap text in ComfyUI attention weighting.
+
+    ComfyUI reads `(text:1.2)`, so any literal parenthesis already in the
+    description has to be escaped or it silently becomes a weight group and
+    eats the rest of the clause.
+    """
+    if weight == 1.0 or not text.strip():
+        return text
+
+    def wrap(s: str) -> str:
+        s = s.replace("(", r"\(").replace(")", r"\)")
+        return f"({s}:{weight:g})"
+
+    if not hair_only:
+        return wrap(text)
+
+    out = []
+    for clause in text.split(","):
+        c = clause.strip()
+        if not c:
+            continue
+        out.append(wrap(c) if any(w in c.lower() for w in _HAIR_WORDS) else c)
+    return ", ".join(out)
+
+
 def _silhouette(appearance: str) -> str:
     """Keep only what is readable at a distance: build, hair, colouring."""
     kept = [c.strip() for c in appearance.split(",")
@@ -390,6 +423,16 @@ class Character(BaseModel):
     # Path to the turnaround sheet used as the QA drift reference.
     sheet_dir: str | None = None
 
+    # Attention weight on the two traits that carry recognition and drift the
+    # fastest. ComfyUI applies this by pushing each token's embedding away from
+    # the empty-prompt embedding (sd1_clip.encode_token_weights), so it works
+    # on the Anima/Qwen encoder exactly as it does on CLIP.
+    #
+    # Deliberately 1.0 by default: turning it on changes the prompt of every
+    # panel, and a chapter already rendered and approved must not silently
+    # drift because a default moved. New characters get it from the extractor.
+    emphasis: float = 1.0
+
     def appearance_prompt(self, ref: CharacterRef | None = None,
                           world: str = "", include_outfit: bool = True,
                           distance: str = "near") -> str:
@@ -400,11 +443,12 @@ class Character(BaseModel):
         # description into a wide shot is what makes the model ignore the
         # framing and render a portrait instead.
         if distance == "far" and self.appearance_far:
-            parts.append(self.appearance_far)
+            look = self.appearance_far
         elif distance == "far":
-            parts.append(_silhouette(self.appearance))
+            look = _silhouette(self.appearance)
         else:
-            parts.append(self.appearance)
+            look = self.appearance
+        parts.append(_emphasise(look, self.emphasis, hair_only=True))
         # Explicit per-panel override wins, then the world's wardrobe entry,
         # then the default. Callers that supply their own outfit (the sheet
         # generator cycles the whole wardrobe) pass include_outfit=False,
@@ -417,7 +461,10 @@ class Character(BaseModel):
                 or self.default_outfit
             )
             if outfit:
-                parts.append(outfit)
+                # The whole outfit is weighted, not just a clause of it: a
+                # character in the wrong clothes reads as a different person
+                # just as fast as one with the wrong face.
+                parts.append(_emphasise(outfit, self.emphasis))
         if ref:
             if ref.expression:
                 parts.append(f"{ref.expression} expression")

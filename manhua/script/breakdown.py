@@ -163,6 +163,56 @@ def story_to_panels(
     )
 
 
+# A cultivation status window, not a caption. The genre's system messages arrive
+# in brackets, and drawn as a plain narration box they read as a stray label --
+# "Ding!" in a white rectangle over a robe.
+_SYSTEM_STARTS = (
+    "ding", "system", "status", "quest", "level up", "warning", "host",
+    "ability", "gift", "skill", "notice", "congratulations", "recommended",
+    "task", "mission", "detected", "activated",
+)
+
+# "Lin Tian sneers, 'You are still alive?'" is a stage direction with a line
+# inside it. Lettered whole, the balloon says the character's own name and then
+# describes them in the third person.
+#
+# Two patterns, and double quotes are tried first: a straight apostrophe is far
+# more often a contraction than a quote mark, and treating it as one cut
+# "You're still alive?" down to "You". The single-quote form only matches when
+# the marks are not touching a letter on the outside.
+_QUOTED = re.compile(r"[\"“]([^\"”]{2,})[\"”]")
+_QUOTED_SINGLE = re.compile(r"(?<!\w)['‘]([^'’]{2,})['’](?!\w)")
+
+
+def _clean_balloon(text: str, bible: dict[str, Character]) -> tuple[str, str, str | None]:
+    """Return (text, kind_override, speaker) for one drafted line."""
+    t = re.sub(r"\*{1,3}|_{2,}", "", text).strip()      # markdown from the prose
+    speaker: str | None = None
+
+    bracketed = bool(re.fullmatch(r"\[.*\]", t, re.S))
+    t = t.strip("[]").strip()
+
+    m = _QUOTED.search(t) or _QUOTED_SINGLE.search(t)
+    if m and m.start() <= 1 and m.end() >= len(t) - 1:
+        # The whole line is the quote. Comic balloons carry no quote marks.
+        t = m.group(1).strip()
+    elif m and len(m.group(1)) < len(t) - 2:
+        # There is prose around the quote. Keep the quote, and if a character is
+        # named in the part outside it, that is who is speaking.
+        outside = (t[:m.start()] + " " + t[m.end():]).lower()
+        for cid, ch_ in bible.items():
+            names = {ch_.name.lower(), cid.replace("_", " ")}
+            if any(n and n in outside for n in names):
+                speaker = cid
+                break
+        t = m.group(1).strip()
+
+    kind = ""
+    if bracketed or t.lower().startswith(_SYSTEM_STARTS):
+        kind = "system"
+    return t, kind, speaker
+
+
 def pace(panels: list[Panel]) -> list[Panel]:
     """Give the strip a rhythm: gap sizes and panel widths.
 
@@ -275,16 +325,26 @@ def _to_panels(
                 chars.append(CharacterRef(id=cid))
                 named.add(cid)
 
-        balloons = [
-            Balloon(
-                kind=b.kind if b.kind in
-                {"speech", "thought", "narration", "shout", "whisper", "system"} else "speech",
-                speaker=b.speaker or None,
-                text=b.text,
-            )
-            for b in d.dialogue
-            if b.text.strip()
-        ]
+        balloons = []
+        for b in d.dialogue:
+            if not b.text.strip():
+                continue
+            text, forced, found = _clean_balloon(b.text, bible)
+            if not text:
+                continue
+            kind = b.kind if b.kind in {
+                "speech", "thought", "narration", "shout", "whisper", "system"
+            } else "speech"
+            speaker = b.speaker if b.speaker in bible else found
+            balloons.append(Balloon(
+                kind=forced or kind,
+                speaker=speaker or None,
+                # A line whose speaker is not in this panel must not grow a
+                # tail: a tail points at a mouth, and pointing it at whoever IS
+                # in frame silently reassigns the line to them.
+                in_panel=speaker is None or any(r.id == speaker for r in chars),
+                text=text,
+            ))
 
         panels.append(
             Panel(

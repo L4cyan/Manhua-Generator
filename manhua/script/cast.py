@@ -33,14 +33,32 @@ SYSTEM = textwrap.dedent(
     - `role`: "main" for the viewpoint character, "side" for a named character
       who speaks or acts, "extra" for unnamed background people (a crowd, "the
       guards"). Give extras a generic id like `guard` or `student`.
-    - `appearance`: PERMANENT physical traits only. Age, build, height, hair
-      colour AND cut AND length, skin tone, eye colour and shape, and any
-      distinguishing mark. Be specific: "short cropped black hair, unkempt" not
-      "dark hair". Never include clothing here, never include mood or emotion,
-      never include anything that changes between scenes.
-    - `outfit`: what they wear, in the same detail. NAME THE GARMENT, ITS CUT,
-      ITS COLOUR AND ITS FASTENING: "dust-coloured hanfu travelling robe, long
-      sleeved cross-collar, wide dark sash tied at the waist, worn cloth boots".
+    - `appearance`: PERMANENT physical traits only. Never clothing, never mood,
+      never anything that changes between scenes.
+
+      THE HAIR IS THE MOST IMPORTANT PART OF THIS FIELD. It is what a reader
+      recognises a character by at a glance, and it is the first thing to go
+      wrong. Give all five of: length, colour, texture, how it is worn or
+      tied, and what the front does. "long black hair, straight and heavy,
+      worn loose down the back, parted in the centre with a long sidelock
+      falling past the jaw on each side" -- not "long black hair".
+
+      Then age, build, height, skin tone, eye colour and shape, and one
+      distinguishing mark.
+
+    - `outfit`: BUILD A COSTUME, do not summarise one. Work outward: the inner
+      garment, then the outer, then the belt or sash, then the footwear, then
+      one accessory. For each, name the garment, its cut, its colour, and how
+      it fastens. Include at least one detail nobody else would have: a
+      pattern, an embroidery motif, a mismatched sleeve, a worn patch, a
+      pendant.
+
+      "black inner robe with a high stiff collar, over it a charcoal
+      cross-collar outer robe embroidered at the hem with silver cloud
+      scrollwork, closed left over right and bound with a wide indigo sash
+      knotted at the left hip, calf-high black boots, a jade ring on a cord at
+      the throat" -- not "black robes".
+
       A vague outfit is the single biggest cause of a character appearing in a
       suit in one panel and a robe in the next.
     - `notes`: one line on who they are, for the human reading this.
@@ -247,6 +265,10 @@ def cast_from_story(story: str, *, setting: str = "",
             default_outfit=outfit,
             role=role,
             sheet_dir=None,
+            # Weight the hair and the outfit in every prompt this character
+            # appears in. They are what recognition rests on and what drifts
+            # first, and the emphasis costs nothing at render time.
+            emphasis=1.0 if role == "extra" else 1.2,
         )
         out.append((char, {
             "notes": f"[{d.role}] {d.notes}".strip(),
