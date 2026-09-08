@@ -820,6 +820,28 @@ let aiming=null;                     // {pid, i} while placing a tail
 const panelSrc=p=>`${"/api"+base()}/panels/${p.id}/image?v=${Date.now()}`+
                   (letterOn&&p.dialogue?.length?"&letter=1":"");
 
+/* Panels appear as they finish. Redrawing the whole strip would work but
+   throws away the scroll position every 38 seconds, so only the panels that
+   actually changed are swapped, in place. */
+async function refreshRendered(){
+  if(!chapter||document.body.dataset.view!=="editor")return;
+  let fresh;
+  try{ fresh=await api(base()); }catch{ return; }
+  const was=new Map(chapter.panels.map(p=>[p.id,p]));
+  let changed=0;
+  fresh.panels.forEach((p,i)=>{
+    const old=was.get(p.id);
+    if(!old)return;
+    if(old.rendered===p.rendered&&old.error===p.error&&old.locked===p.locked)return;
+    const node=document.querySelector(`.panel[data-id="${p.id}"]`);
+    if(node){node.replaceWith(panelNode(p,i));changed++;}
+  });
+  chapter=fresh;
+  if(changed){drawHeader();drawTabs();}
+  // A panel count that changed at all means the strip's shape did too.
+  if(fresh.panels.length!==was.size) drawStrip();
+}
+
 async function reloadPanel(pid){
   const el=document.querySelector(`.panel[data-id="${pid}"]`);
   const p=chapter.panels.find(x=>x.id===pid);
@@ -1178,16 +1200,17 @@ function makeLog(host){
   };
 }
 
-async function pollJob(id,label,log){
-  let seen=null;
+async function pollJob(id,label,log,onStep){
+  let seen=null,done=-1;
   for(;;){
     const j=await api("/jobs/"+id);
     if(j.state==="error"){setStatus(j.error,null,true);log?.fail(j.error);return null;}
-    if(j.state==="ok"){setStatus(label+" done",1);return j;}
+    if(j.state==="ok"){setStatus(label+" done",1);await onStep?.();return j;}
     if(log){
       if(j.detail&&j.detail!==seen){seen=j.detail;log.line(j.detail);}
       log.tick();
     }
+    if(onStep&&j.done!==done){done=j.done;await onStep();}
     setStatus(`${label}... ${j.detail||""}`.trim()+(j.total>1?` (${j.done}/${j.total})`:""),
               j.total?j.done/j.total:null);
     await new Promise(r=>setTimeout(r,600));
@@ -1198,7 +1221,7 @@ async function renderPanel(id,reroll){
   document.querySelector(`.panel[data-id="${id}"]`)?.classList.add("busy");
   try{
     const j=await api(`${base()}/panels/${id}/render?reroll=${!!reroll}`,{method:"POST"});
-    await pollJob(j.id,reroll?"Reroll":"Render");
+    await pollJob(j.id,reroll?"Reroll":"Render",null,refreshRendered);
   }catch(e){setStatus(e.message,null,true);}
   await openChapter(chapter.number); await refreshProject();
 }
@@ -1211,7 +1234,7 @@ async function renderBeat(all){
   for(const beat of beats){
     try{
       const j=await api(`${base()}/beats/${beat}/render`,{method:"POST"});
-      const done=await pollJob(j.id,`Beat ${beat}`);
+      const done=await pollJob(j.id,`Beat ${beat}`,null,refreshRendered);
       if(!done)break;
     }catch(e){setStatus(e.message,null,true);break;}
     await openChapter(chapter.number);
@@ -2006,7 +2029,7 @@ Roughly ${mins} minute(s) on this card.`)) return;
   try{
     const j=await api(`${base()}/rerender`,{method:"POST",
       body:JSON.stringify({new_seeds:false,cast_only:true})});
-    await pollJob(j.id,"Re-render");
+    await pollJob(j.id,"Re-render",null,refreshRendered);
   }catch(e){setStatus(e.message,null,true);}
   await openChapter(chapter.number); await refreshProject();
 };

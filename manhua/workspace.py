@@ -27,6 +27,7 @@ import shutil
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -59,14 +60,17 @@ TRASH_DAYS = 30
 # One lock per file on disk. The studio saves from several threads at once --
 # dragging a balloon patches a panel while the browser is still fetching others
 # -- and two writers of the same file corrupt it.
-_LOCKS: dict[Path, threading.Lock] = {}
+#
+# Reentrant, because `edit()` holds a chapter's lock across a read-modify-write
+# and the `save()` inside it takes the same lock again.
+_LOCKS: dict[Path, threading.RLock] = {}
 _LOCKS_GUARD = threading.Lock()
 
 
-def _lock_for(path: Path) -> threading.Lock:
+def _lock_for(path: Path) -> threading.RLock:
     key = path.resolve()
     with _LOCKS_GUARD:
-        return _LOCKS.setdefault(key, threading.Lock())
+        return _LOCKS.setdefault(key, threading.RLock())
 
 
 def save_json(path: Path, payload: dict) -> None:
@@ -103,6 +107,31 @@ def save_json(path: Path, payload: dict) -> None:
                     time.sleep(0.02)
         finally:
             tmp.unlink(missing_ok=True)
+
+
+def save_image(img: Image.Image, path: Path) -> None:
+    """Write a panel image so a reader never sees half of one.
+
+    PIL writes straight into the destination, and the editor reloads panels
+    while a batch is still rendering. A GET landing mid-write serves a
+    truncated PNG, and the browser draws the part that arrived: a panel that
+    looks like it broke halfway through baking. The file on disk was always
+    fine. Same fix as the JSON -- write beside it, then swap.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.stem}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        img.save(tmp, format="PNG")
+        for attempt in range(40):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if attempt == 39:
+                    raise
+                time.sleep(0.02)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def load_json(path: Path) -> dict:
@@ -205,7 +234,16 @@ class Chapter:
         return max((p.beat for p in self.panels), default=-1) + 1
 
     def render_panel(self, panel: Panel, backend: Backend, *, new_seed: bool = False) -> Path:
-        """Render one panel. Locked panels are never touched."""
+        """Render one panel. Locked panels are never touched.
+
+        The render itself takes half a minute and must not hold the chapter
+        lock for it, or the editor freezes for the length of a chapter. So the
+        slow part runs unlocked, and only the small write at the end is
+        serialised -- and that write goes through `edit`, which re-reads the
+        chapter first. Without that, a job started ten panels ago holds a stale
+        copy of the whole chapter and saving it silently reverts every edit
+        made while it was running.
+        """
         st = self.stat(panel.id)
         if st.locked:
             return self.panel_path(panel.id)
@@ -217,16 +255,26 @@ class Chapter:
 
         req = build_request(panel, self.project.style, self.project.bible, panel.seed)
         req.positive = self.project.apply_addendum(req.positive)
+        seed, rerolls = panel.seed, panel.reroll_count
+
+        def record(error: str | None) -> None:
+            with self.project.edit_chapter(self.number) as live:
+                target = live.get(panel.id)
+                if target is not None:
+                    target.seed, target.reroll_count = seed, rerolls
+                s = live.stat(panel.id)
+                s.error, s.rendered = error, error is None
+
         try:
             img: Image.Image = backend.render(req)
         except Exception as exc:
+            record(str(exc)[:400])
             st.error, st.rendered = str(exc)[:400], False
-            self.save()
             raise
 
-        img.save(self.panel_path(panel.id))
+        save_image(img, self.panel_path(panel.id))
+        record(None)
         st.rendered, st.error = True, None
-        self.save()
         return self.panel_path(panel.id)
 
 
@@ -338,6 +386,23 @@ class Project:
 
     def chapters(self) -> list[Chapter]:
         return [Chapter.load(self, n) for n in self.chapter_numbers()]
+
+    @contextmanager
+    def edit_chapter(self, number: int):
+        """Mutate a chapter under its lock, on freshly-read state.
+
+        Two writers held their own in-memory copy of the whole chapter and each
+        `save()` wrote all of it, so whoever finished last silently reverted the
+        other. Editing a panel while a batch rendered lost the edit; the render
+        finishing after an edit lost the `rendered` flag. Everything that
+        changes a chapter goes through here now: re-read, apply, write, with
+        the lock held for all three.
+        """
+        ch = Chapter.load(self, number)
+        with _lock_for(ch.file):
+            ch = Chapter.load(self, number)
+            yield ch
+            ch.save()
 
     def chapter(self, number: int) -> Chapter:
         return Chapter.load(self, number)

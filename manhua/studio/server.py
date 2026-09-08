@@ -454,20 +454,24 @@ def create_app(workspace_root: str = "workspace", backend: str = "comfy",
     @app.patch("/api/projects/{pid}/chapters/{n}/panels/{panel_id}")
     def patch_panel(panel_id: str, patch: PanelPatch,
                     ch: Chapter = Depends(get_chapter)) -> dict:
-        p = ch.get(panel_id)
-        if p is None:
+        if ch.get(panel_id) is None:
             raise HTTPException(404, f"no panel {panel_id}")
-        for k, v in patch.model_dump(exclude_none=True).items():
+        # Under the chapter lock, on freshly-read state: a render batch running
+        # in the other lane holds its own copy of the whole chapter, and
+        # without this the later of the two saves reverts the other.
+        with ch.project.edit_chapter(ch.number) as live:
+            p = live.get(panel_id)
+            for k, v in patch.model_dump(exclude_none=True).items():
             # Pydantic does not validate on assignment, so a patched list would
             # stay as raw dicts and the very next render would die reaching for
             # `.id` on one. Rebuild the models explicitly.
-            if k == "characters":
-                v = [CharacterRef(**c) for c in v]
-            elif k == "dialogue":
-                v = [Balloon(**b) for b in v]
-            setattr(p, k, v)
-        ch.save()
-        return p.model_dump(mode="json")
+                if k == "characters":
+                    v = [CharacterRef(**c) for c in v]
+                elif k == "dialogue":
+                    v = [Balloon(**b) for b in v]
+                setattr(p, k, v)
+            out = p.model_dump(mode="json")
+        return out
 
 
     @app.get("/api/projects/{pid}/chapters/{n}/panels/{panel_id}/prompt")
@@ -504,17 +508,17 @@ def create_app(workspace_root: str = "workspace", backend: str = "comfy",
 
     @app.delete("/api/projects/{pid}/chapters/{n}/panels/{panel_id}")
     def delete_panel(panel_id: str, ch: Chapter = Depends(get_chapter)) -> dict:
-        ch.panels = [p for p in ch.panels if p.id != panel_id]
-        ch.status.pop(panel_id, None)
+        with ch.project.edit_chapter(ch.number) as live:
+            live.panels = [p for p in live.panels if p.id != panel_id]
+            live.status.pop(panel_id, None)
         ch.panel_path(panel_id).unlink(missing_ok=True)
-        ch.save()
         return {"ok": True}
 
     @app.post("/api/projects/{pid}/chapters/{n}/panels/{panel_id}/lock")
     def lock_panel(panel_id: str, locked: bool = True,
                    ch: Chapter = Depends(get_chapter)) -> dict:
-        ch.stat(panel_id).locked = locked
-        ch.save()
+        with ch.project.edit_chapter(ch.number) as live:
+            live.stat(panel_id).locked = locked
         return {"id": panel_id, "locked": locked}
 
     @app.post("/api/projects/{pid}/chapters/{n}/panels/reorder")

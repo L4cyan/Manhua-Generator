@@ -40,3 +40,4 @@ tools/sd-scripts/
 !scripts/concurrency_check.py
 !scripts/trash_check.py
 !scripts/cast_check.py
+!scripts/edit_during_render_check.py
