@@ -656,6 +656,19 @@ def make_backend(kind: str = "auto", host: str = "127.0.0.1:8188") -> Backend:
         s = autoconfigure()
         return NativeBackend(s.checkpoint, lora_dir=s.lora_dir or None, low_vram=s.low_vram)
 
+    # Asking for "comfy" by name still has to pick up the model settings. Built
+    # bare, this defaulted to an SDXL graph and asked ComfyUI for whatever
+    # checkpoint the style lock named, which is not what is installed -- the
+    # studio's Render button failed with "value_not_in_list" while the scripts,
+    # which go through "auto", rendered fine.
+    from .bootstrap import autoconfigure
     from .render.comfy import ComfyBackend
 
-    return ComfyBackend(host=host)
+    s = autoconfigure()
+    return ComfyBackend(
+        host=host or s.comfy_host,
+        model_type=s.comfy_model_type,
+        unet=s.comfy_unet,
+        clip=s.comfy_clip,
+        vae=s.comfy_vae,
+    )

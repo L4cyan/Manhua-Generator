@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import json
 import urllib.parse
+import urllib.request
 import uuid
 
 import requests
@@ -62,6 +63,36 @@ class ComfyBackend(Backend):
         self.clip = clip or "qwen_3_06b_base.safetensors"
         self.vae = vae or "qwen_image_vae.safetensors"
         self.client_id = str(uuid.uuid4())
+        self._ckpts: list[str] | None = None
+
+    # ---------- model resolution ----------
+
+    def checkpoint(self, wanted: str) -> str:
+        """The checkpoint to actually load.
+
+        A style lock names the checkpoint it was written for, and that file is
+        very often not the one installed. ComfyUI's own error for this is a
+        wall of validation JSON that never says "download this or pick another",
+        so substitute what is there and say so.
+        """
+        if self._ckpts is None:
+            try:
+                with urllib.request.urlopen(
+                    f"http://{self.host}/object_info/CheckpointLoaderSimple", timeout=10
+                ) as r:
+                    info = json.load(r)
+                self._ckpts = list(
+                    info["CheckpointLoaderSimple"]["input"]["required"]["ckpt_name"][0]
+                )
+            except Exception:
+                self._ckpts = []                 # cannot ask; let ComfyUI decide
+
+        if not self._ckpts or wanted in self._ckpts:
+            return wanted
+        fallback = self._ckpts[0]
+        print(f"  checkpoint '{wanted}' is not installed; using '{fallback}' "
+              f"(installed: {', '.join(self._ckpts)})")
+        return fallback
 
     # ---------- graph construction ----------
 
@@ -158,7 +189,7 @@ class ComfyBackend(Backend):
         g: dict[str, dict] = {
             "ckpt": {
                 "class_type": "CheckpointLoaderSimple",
-                "inputs": {"ckpt_name": s.checkpoint},
+                "inputs": {"ckpt_name": self.checkpoint(s.checkpoint)},
             }
         }
 
@@ -371,7 +402,7 @@ class ComfyBackend(Backend):
             vae_src = ["vae", 0]
         else:
             g = {"ckpt": {"class_type": "CheckpointLoaderSimple",
-                          "inputs": {"ckpt_name": s.checkpoint}}}
+                          "inputs": {"ckpt_name": self.checkpoint(s.checkpoint)}}}
             model_src, clip_src, vae_src = ["ckpt", 0], ["ckpt", 1], ["ckpt", 2]
 
         g.update({
@@ -442,7 +473,7 @@ class ComfyBackend(Backend):
             sampler_name = "euler_ancestral"
         else:
             g = {"ckpt": {"class_type": "CheckpointLoaderSimple",
-                          "inputs": {"ckpt_name": s.checkpoint}}}
+                          "inputs": {"ckpt_name": self.checkpoint(s.checkpoint)}}}
             model_src, clip_src, vae_src = ["ckpt", 0], ["ckpt", 1], ["ckpt", 2]
             sampler_name = _comfy_sampler(s.sampler)
 
