@@ -353,6 +353,22 @@ The mock backend means you can work on layout, lettering, export, and UI with no
 
 ## Licence
 
-MIT. You own everything you make with it.
+**GNU AGPL-3.0.** Copyright (c) 2026 Clyde Xander Cielo — [lacyan.me](https://lacyan.me)
 
-Art styles aren't copyrightable, so a style prompt targeting a look you like is fine — but build with **original characters**. Don't ship a repo that reproduces someone's existing cast.
+In plain terms:
+
+- Use it, change it, run it, sell what you make with it. **The manhua you
+  create is yours.** This licence covers the tool, not its output.
+- If you distribute it or run a modified version **as a network service**, you
+  must publish your source under the same licence. That is the difference
+  between AGPL and GPL, and it is the whole reason for picking it.
+- Keep the copyright notice.
+
+Want to build a closed-source or hosted product on this without publishing your
+changes? That is what a **commercial licence** is for. The copyright is held by
+one person, so it can be granted: get in touch through
+[lacyan.me](https://lacyan.me).
+
+Art styles are not copyrightable, so a style prompt targeting a look you like is
+fine — but build with **original characters**. Don't ship a repo that
+reproduces someone else's cast.

@@ -412,6 +412,8 @@ textarea.yaml{min-height:340px}
       style="width:auto;padding:7px 26px 7px 10px;font-size:12.5px">
       <option value="png">PNG</option><option value="jpg">JPG</option>
       <option value="webp">WEBP</option></select>
+    <button class="ghost" id="btnCredit" title="Print a credit line under the last panel">
+      <span data-ic="info"></span></button>
     <button id="btnExport"><span data-ic="download"></span>Export</button>
   </header>
 
@@ -1841,13 +1843,23 @@ $("#edReroll").onclick=async()=>{
 $("#btnRender").onclick=()=>chapter&&renderBeat(false);
 $("#btnRenderAll").onclick=()=>chapter&&renderBeat(true);
 $("#btnLetter").onclick=()=>setLetter(!letterOn);
+
+// A courtesy line, on by default and one click to remove. Anyone can crop it
+// out of their own strip, which is the honest status of a credit like this.
+let creditOn=localStorage.getItem("manhua.credit")!=="0";
+$("#btnCredit").onclick=()=>{
+  creditOn=!creditOn;
+  try{localStorage.setItem("manhua.credit",creditOn?"1":"0");}catch{}
+  $("#btnCredit").classList.toggle("on",creditOn);
+  setStatus(creditOn?"exports will carry a credit line":"credit line off");
+};
 $("#btnExport").onclick=async()=>{
   if(!chapter)return;
   const fmt=$("#expFmt").value;
   setStatus("composing the strip...",.5);
   try{
     const r=await api(`${base()}/export`,{method:"POST",
-      body:JSON.stringify({letter:letterOn,fmt})});
+      body:JSON.stringify({letter:letterOn,fmt,credit:creditOn})});
     setStatus(`exported ${r.panels} panels as ${fmt.toUpperCase()} · `+
               `${r.height}px tall · ${r.dir}`,1);
   }catch(e){setStatus(e.message,null,true);}
@@ -1877,6 +1889,7 @@ document.addEventListener("keydown",e=>{
   }catch{$("#healthTxt").textContent="backend unknown";}
 
   $("#btnLetter").classList.toggle("on",letterOn);
+  $("#btnCredit").classList.toggle("on",creditOn);
   styles=await api("/styles");
   await refreshProjects();
   if(location.hash==="#new"){history.replaceState(null,"","/");

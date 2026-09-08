@@ -22,11 +22,15 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
-from ..compose.strip import compose, export
+from ..compose.strip import add_credit, compose, export
 from ..models import Balloon, Character, CharacterRef, Panel
 from ..workspace import DEFAULT_STYLE, Chapter, Project, Workspace, make_backend
 
 STATIC = Path(__file__).parent / "static"
+
+# Printed under the last panel on export, unless switched off. See the Licence
+# section of the README for why this is a courtesy and not a control.
+CREDIT = "made with Manhua Generator  ·  lacyan.me"
 
 
 # ---------------------------------------------------------------- jobs
@@ -163,6 +167,7 @@ class ExportReq(BaseModel):
     letter: bool = True
     fmt: str = "png"        # png | jpg | webp
     quality: int = 92
+    credit: bool = True
 
 
 # ---------------------------------------------------------------- chunking
@@ -710,6 +715,8 @@ def create_app(workspace_root: str = "workspace", backend: str = "comfy",
             raise HTTPException(400, "no rendered panels to export")
 
         strip, places = compose(items, ch.project.canvas)
+        if req.credit:
+            strip = add_credit(strip, CREDIT, ch.project.canvas)
         written = export(
             strip, places, ch.project.canvas, ch.dir / "export",
             stem=f"ch{ch.number:03d}", fmt=req.fmt, quality=req.quality,

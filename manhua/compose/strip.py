@@ -159,6 +159,31 @@ _FORMATS = {
 }
 
 
+def add_credit(strip: Image.Image, text: str, cfg: CanvasCfg) -> Image.Image:
+    """Add a thin credit line under the last panel.
+
+    Promotion, not protection: it is a line of pixels in the reader's copy and
+    anyone can crop it. It is here because a strip that travels well should say
+    where it came from, not because it enforces anything. Off in one click.
+    """
+    from PIL import ImageDraw, ImageFont
+
+    if not text:
+        return strip
+    band = max(34, strip.width // 34)
+    out = Image.new("RGB", (strip.width, strip.height + band), cfg.background)
+    out.paste(strip, (0, 0))
+    d = ImageDraw.Draw(out)
+    size = max(11, band // 3)
+    try:
+        font = ImageFont.truetype("arial.ttf", size)
+    except OSError:
+        font = ImageFont.load_default(size)
+    d.text((strip.width // 2, strip.height + band // 2), text,
+           font=font, fill="#9a9aa1", anchor="mm")
+    return out
+
+
 def export(
     strip: Image.Image,
     placements: list[PlacedPanel],
