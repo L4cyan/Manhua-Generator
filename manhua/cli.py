@@ -209,7 +209,7 @@ def export(
         img = Image.open(path).convert("RGB")
         if letter and p.dialogue:
             img = letter_panel(img, p, proj)
-        items.append((p.id, img, p.aspect == "full_bleed"))
+        items.append((p.id, img, p.aspect == "full_bleed", p.pause, p.inset))
 
     if not items:
         console.print("[red]no rendered panels[/red]")

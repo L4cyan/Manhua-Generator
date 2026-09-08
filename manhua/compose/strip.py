@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 
 @dataclass
@@ -19,6 +19,22 @@ class CanvasCfg:
     margin: int = 0
     background: str = "#FFFFFF"
     slice_max_height: int = 1280
+    border: str = "#141018"
+    border_width: int = 3
+
+
+# The gutter is the pacing control of a vertical scroll, and a single fixed
+# value for every transition is what makes a chapter read as a slideshow
+# instead of a comic. These are the sizes vertical-scroll comics actually use:
+# a tight gap keeps the thumb moving through fast action, and a large one
+# forces the reader to stop before a reveal lands.
+PAUSE_GUTTER: dict[str, int] = {
+    "tight": 40,     # rapid dialogue, blow-by-blow action
+    "normal": 110,
+    "beat": 240,     # a reaction, a held glance
+    "scene": 480,    # somewhere else, or some other time
+    "cliff": 760,    # make them wait for it
+}
 
 
 @dataclass
@@ -38,34 +54,64 @@ def _fit(img: Image.Image, target_w: int) -> Image.Image:
 
 
 def compose(
-    panels: list[tuple[str, Image.Image, bool]],
+    panels: list[tuple],
     cfg: CanvasCfg,
 ) -> tuple[Image.Image, list[PlacedPanel]]:
     """Stack panels into one tall image.
 
-    `panels` is (panel_id, image, full_bleed). Full-bleed panels ignore the
-    side margin and butt against their neighbours with no gutter above, which
-    is how webtoons signal a scale or impact moment.
+    Each entry is `(panel_id, image, full_bleed)` and may carry two more
+    fields, `pause` and `inset`:
+
+      pause  a key of PAUSE_GUTTER controlling the gap BEFORE this panel.
+             This is how the strip gets a rhythm rather than a constant beat.
+      inset  0.0-0.45, the fraction of the canvas width to pull the panel in
+             by. Varying panel width is what stops a scroll reading as a
+             stack of identical rectangles; a narrow panel also reads as a
+             quieter, smaller moment, which is a storytelling tool.
+
+    Full-bleed panels ignore the margin and the border and butt against their
+    neighbours, which is how a vertical scroll signals scale or impact.
     """
     if not panels:
         return Image.new("RGB", (cfg.width, 1), cfg.background), []
 
-    inner_w = cfg.width - cfg.margin * 2
-    prepared: list[tuple[str, Image.Image, bool]] = [
-        (pid, _fit(img, cfg.width if bleed else inner_w), bleed) for pid, img, bleed in panels
-    ]
+    norm = []
+    for entry in panels:
+        pid, img, bleed = entry[0], entry[1], entry[2]
+        pause = entry[3] if len(entry) > 3 else "normal"
+        inset = entry[4] if len(entry) > 4 else 0.0
+        norm.append((pid, img, bleed, pause, float(inset or 0.0)))
+
+    prepared = []
+    for i, (pid, img, bleed, pause, inset) in enumerate(norm):
+        if bleed:
+            w = cfg.width
+        else:
+            side = cfg.margin + int(cfg.width * min(max(inset, 0.0), 0.45) / 2)
+            w = cfg.width - side * 2
+        prepared.append((pid, _fit(img, w), bleed, pause, w))
 
     total_h = 0
     placements: list[PlacedPanel] = []
-    for i, (pid, img, bleed) in enumerate(prepared):
-        if i > 0 and not bleed:
-            total_h += cfg.gutter
+    for i, (pid, img, bleed, pause, w) in enumerate(prepared):
+        if i > 0:
+            # A full-bleed panel butts against what came before it; everything
+            # else gets the gap its own pacing asks for.
+            total_h += 0 if bleed else PAUSE_GUTTER.get(pause, cfg.gutter)
         placements.append(PlacedPanel(pid, total_h, img.height))
         total_h += img.height
 
     strip = Image.new("RGB", (cfg.width, total_h), cfg.background)
-    for (pid, img, bleed), place in zip(prepared, placements):
-        strip.paste(img, (0 if bleed else cfg.margin, place.top))
+    draw = ImageDraw.Draw(strip)
+    for (pid, img, bleed, pause, w), place in zip(prepared, placements):
+        x = 0 if bleed else (cfg.width - w) // 2
+        strip.paste(img, (x, place.top))
+        if not bleed and cfg.border_width > 0:
+            # A drawn edge is what turns an image into a panel.
+            draw.rectangle(
+                [x, place.top, x + img.width - 1, place.top + img.height - 1],
+                outline=cfg.border, width=cfg.border_width,
+            )
 
     return strip, placements
 

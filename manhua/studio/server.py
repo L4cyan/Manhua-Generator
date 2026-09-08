@@ -374,7 +374,7 @@ def create_app(workspace_root: str = "workspace", backend: str = "comfy",
             img = Image.open(path).convert("RGB")
             if letter and p.dialogue:
                 img = letter_panel(img, p, ch.project)
-            items.append((p.id, img, p.aspect == "full_bleed"))
+            items.append((p.id, img, p.aspect == "full_bleed", p.pause, p.inset))
 
         if not items:
             raise HTTPException(400, "no rendered panels to export")

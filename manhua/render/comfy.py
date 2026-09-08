@@ -18,6 +18,27 @@ from PIL import Image
 from .base import Backend, RenderRequest
 
 
+# Style locks use the A1111/Civitai sampler vocabulary, which is what the
+# recommended-settings blocks on model pages are written in. ComfyUI uses its
+# own names and rejects the whole workflow on a mismatch, which is how an
+# entire Illustrious comparison came back as five identical validation errors.
+_SAMPLER_ALIASES = {
+    "euler_a": "euler_ancestral",
+    "euler a": "euler_ancestral",
+    "dpmpp_2m_karras": "dpmpp_2m",
+    "dpm++ 2m karras": "dpmpp_2m",
+    "dpm++ 2m": "dpmpp_2m",
+    "dpm++ sde karras": "dpmpp_sde",
+    "dpm++ 2m sde karras": "dpmpp_2m_sde",
+    "ddim": "ddim",
+    "unipc": "uni_pc",
+}
+
+
+def _comfy_sampler(name: str) -> str:
+    return _SAMPLER_ALIASES.get((name or "").strip().lower(), name or "euler")
+
+
 class ComfyBackend(Backend):
     """Renders through a running ComfyUI instance.
 
@@ -53,7 +74,7 @@ class ComfyBackend(Backend):
         rather than through diffusers.
         """
         s = req.style.render
-        return {
+        g: dict[str, dict] = {
             "unet": {
                 "class_type": "UNETLoader",
                 "inputs": {"unet_name": self.unet, "weight_dtype": "default"},
@@ -67,6 +88,26 @@ class ComfyBackend(Backend):
                 "inputs": {"clip_name": self.clip, "type": "qwen_image"},
             },
             "vae": {"class_type": "VAELoader", "inputs": {"vae_name": self.vae}},
+        }
+
+        # Character and style LoRAs. Anima trains these UNet-only (the Qwen3
+        # encoder is frozen), so this chains LoraLoaderModelOnly rather than
+        # LoraLoader -- passing a CLIP through would be a no-op at best and a
+        # missing-key error at worst.
+        model_src: list = ["unet", 0]
+        for i, (name, weight) in enumerate(req.loras):
+            node = f"lora{i}"
+            g[node] = {
+                "class_type": "LoraLoaderModelOnly",
+                "inputs": {
+                    "lora_name": name,
+                    "strength_model": weight,
+                    "model": model_src,
+                },
+            }
+            model_src = [node, 0]
+
+        g.update({
             "pos": {
                 "class_type": "CLIPTextEncode",
                 "inputs": {"text": req.positive, "clip": ["clip", 0]},
@@ -88,7 +129,7 @@ class ComfyBackend(Backend):
                     "sampler_name": "euler_ancestral",
                     "scheduler": "normal",
                     "denoise": 1.0,
-                    "model": ["unet", 0],
+                    "model": model_src,
                     "positive": ["pos", 0],
                     "negative": ["neg", 0],
                     "latent_image": ["latent", 0],
@@ -102,7 +143,8 @@ class ComfyBackend(Backend):
                 "class_type": "SaveImage",
                 "inputs": {"filename_prefix": "manhua/anima", "images": ["decode", 0]},
             },
-        }
+        })
+        return g
 
     def _graph(self, req: RenderRequest) -> dict:
         if self.model_type == "anima":
@@ -160,7 +202,7 @@ class ComfyBackend(Backend):
                 "seed": req.seed,
                 "steps": s.steps,
                 "cfg": s.cfg,
-                "sampler_name": s.sampler,
+                "sampler_name": _comfy_sampler(s.sampler),
                 "scheduler": s.scheduler,
                 "denoise": 1.0,
                 "model": model_src,
@@ -188,7 +230,7 @@ class ComfyBackend(Backend):
                     "seed": req.seed,
                     "steps": h.steps,
                     "cfg": s.cfg,
-                    "sampler_name": s.sampler,
+                    "sampler_name": _comfy_sampler(s.sampler),
                     "scheduler": s.scheduler,
                     "denoise": h.denoise,
                     "model": model_src,
@@ -208,6 +250,89 @@ class ComfyBackend(Backend):
             "inputs": {"filename_prefix": "manhua/panel", "images": ["decode", 0]},
         }
         return g
+
+
+    # ---------- background removal ----------
+
+    def _run_graph(self, graph: dict) -> list[Image.Image]:
+        """Execute an arbitrary graph and return every image it saved."""
+        ws = websocket.WebSocket()
+        ws.settimeout(self.timeout)
+        ws.connect(f"ws://{self.host}/ws?clientId={self.client_id}")
+        try:
+            resp = requests.post(
+                f"http://{self.host}/prompt",
+                json={"prompt": graph, "client_id": self.client_id},
+                timeout=30,
+            )
+            if resp.status_code != 200:
+                raise RuntimeError(f"ComfyUI rejected the workflow: {resp.text[:500]}")
+            prompt_id = resp.json()["prompt_id"]
+            while True:
+                msg = ws.recv()
+                if not isinstance(msg, str):
+                    continue
+                data = json.loads(msg)
+                if data.get("type") != "executing":
+                    continue
+                d = data["data"]
+                if d.get("node") is None and d.get("prompt_id") == prompt_id:
+                    break
+        finally:
+            ws.close()
+
+        history = requests.get(f"http://{self.host}/history/{prompt_id}", timeout=30).json()
+        out: list[Image.Image] = []
+        for node_out in history[prompt_id]["outputs"].values():
+            for meta in node_out.get("images", []):
+                out.append(self._fetch(meta))
+        return out
+
+    def upload_image(self, img: Image.Image, name: str) -> str:
+        """Put an image into ComfyUI's input folder so a graph can load it."""
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="PNG")
+        buf.seek(0)
+        resp = requests.post(
+            f"http://{self.host}/upload/image",
+            files={"image": (name, buf, "image/png")},
+            data={"overwrite": "true"},
+            timeout=120,
+        )
+        resp.raise_for_status()
+        j = resp.json()
+        sub = j.get("subfolder") or ""
+        return f"{sub}/{j['name']}" if sub else j["name"]
+
+    def cutout(self, img: Image.Image, name: str = "cutout_src.png") -> Image.Image:
+        """Matte a character out of its background, returning RGBA.
+
+        Uses BRIA RMBG rather than a threshold or a plain u2net pass: the
+        edges that matter here are hair, and everything simpler leaves a halo
+        that is obvious the moment the character is composited over a
+        different background.
+        """
+        ref = self.upload_image(img, name)
+        graph = {
+            "load": {"class_type": "LoadImage", "inputs": {"image": ref}},
+            "rmbgmodel": {"class_type": "BRIA_RMBG_ModelLoader_Zho", "inputs": {}},
+            "rmbg": {
+                "class_type": "BRIA_RMBG_Zho",
+                "inputs": {"rmbgmodel": ["rmbgmodel", 0], "image": ["load", 0]},
+            },
+            "maskimg": {"class_type": "MaskToImage", "inputs": {"mask": ["rmbg", 1]}},
+            "save": {
+                "class_type": "SaveImage",
+                "inputs": {"filename_prefix": "manhua/mask", "images": ["maskimg", 0]},
+            },
+        }
+        images = self._run_graph(graph)
+        if not images:
+            raise RuntimeError("background removal returned nothing")
+        mask = images[0].convert("L").resize(img.size, Image.LANCZOS)
+        rgba = img.convert("RGBA")
+        rgba.putalpha(mask)
+        return rgba
 
     # ---------- execution ----------
 

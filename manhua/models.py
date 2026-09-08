@@ -31,9 +31,9 @@ class Shot(str, Enum):
 # "extreme wide establishing shot of a vast landscape". Prose framing is the
 # main reason these models collapse every panel into a character portrait.
 SHOT_TOKENS: dict[Shot, str] = {
-    Shot.establishing: "scenery, wide shot, landscape, panorama, extremely distant view",
-    Shot.wide: "wide shot, full body, environment visible, distant view",
-    Shot.full: "full body, standing, head to toe",
+    Shot.establishing: "(extreme wide shot:1.4), scenery, landscape, panorama, (distant view:1.3), tiny figures, environment fills the frame",
+    Shot.wide: "(wide shot:1.4), (full body:1.3), whole figure visible head to toe, environment visible around them, camera far back",
+    Shot.full: "(full body:1.4), head to toe, whole figure in frame, feet visible, standing, camera far enough back to see all of them",
     Shot.medium: "cowboy shot, upper body",
     Shot.close: "portrait, close-up, face focus, head and shoulders",
     Shot.extreme_close: "extreme close-up, eye focus, macro detail",
@@ -58,12 +58,47 @@ SHOT_NEGATIVES: dict[Shot, str] = {
     Shot.reaction: "full body, wide shot",
 }
 
+# How far the camera is, which decides how much of a character to describe.
+#
+# This is the single biggest cause of "every panel is a face". An identity lock
+# is a FACE description -- jawline, irises, lashes, brows, nose, mouth -- and
+# against four words of framing the face wins, so a wide shot comes back as a
+# portrait with a tiny figure pasted into it. At thirty metres none of that is
+# visible anyway. Far shots get the silhouette: build, hair, wardrobe.
+SHOT_DISTANCE: dict[Shot, str] = {
+    Shot.establishing: "far",
+    Shot.wide: "far",
+    Shot.full: "far",
+    Shot.medium: "mid",
+    Shot.over_shoulder: "mid",
+    Shot.pov: "mid",
+    Shot.close: "near",
+    Shot.extreme_close: "near",
+    Shot.reaction: "near",
+    Shot.insert: "near",
+}
+
 Aspect = Literal["tall", "square", "wide", "banner", "full_bleed"]
 # Which world a panel is set in. Genre words are strong enough to override
 # clothing and architecture, so an isekai has to be able to say "this scene is
 # the modern world" per panel. Keys must exist in style.yaml -> registers.
 Register = Literal["cultivation", "modern", "neutral"]
 BalloonKind = Literal["speech", "thought", "narration", "shout", "whisper", "system"]
+
+
+# Words that only exist on a face. A clause containing one of these is dropped
+# when the camera is far enough away that it could not be seen.
+_FACE_WORDS = (
+    "eye", "iris", "lash", "eyebrow", "brow", "jaw", "cheek", "nose", "mouth",
+    "lip", "chin", "freckle", "expression", "gaze", "face", "facial",
+)
+
+
+def _silhouette(appearance: str) -> str:
+    """Keep only what is readable at a distance: build, hair, colouring."""
+    kept = [c.strip() for c in appearance.split(",")
+            if c.strip() and not any(w in c.lower() for w in _FACE_WORDS)]
+    return ", ".join(kept)
 
 
 class CharacterRef(BaseModel):
@@ -123,16 +158,44 @@ class Panel(BaseModel):
 
     # Fixed at breakdown time so a re-render of the episode is reproducible.
     seed: int | None = None
+    # Vertical-scroll pacing. `pause` sizes the gap BEFORE this panel
+    # (tight | normal | beat | scene | cliff) and `inset` pulls it in from
+    # the canvas edges. Together they are what stop a chapter reading as a
+    # stack of identical rectangles.
+    pause: str = "normal"
+    inset: float = 0.0
     # Unnamed people who are not in the bible (a lecture hall, a crowd).
     # Keeps `no humans` off panels that clearly contain people.
     extras: int = 0
     extras_sex: str = "male"
+    # How much to draw the strangers. "faceless" is what manhua actually
+    # does for mob characters; "detailed" is for the one student who
+    # speaks, who needs a face because the reader looks at them.
+    extras_style: str = "faceless"   # faceless | silhouette | detailed
     # Set by the QA gate after a reroll, for audit.
     reroll_count: int = 0
 
     def content_prompt(self, bible: dict[str, "Character"]) -> str:
         """Panel-specific half of the prompt. The style lock supplies the rest."""
-        parts: list[str] = [SHOT_TOKENS[self.shot]]
+        shot_tokens = SHOT_TOKENS[self.shot]
+        if self.extras:
+            # "scenery" and "extremely distant view" read as an empty place.
+            # A lecture hall of students under an establishing shot came back
+            # as rows of empty desks every time. Drop the emptiness words and
+            # say there is a crowd, or the count tag below is arguing with the
+            # framing and the framing wins.
+            for empty in ("scenery, ", "extremely distant view", "no humans"):
+                shot_tokens = shot_tokens.replace(empty, "")
+            shot_tokens = ", ".join(p.strip() for p in shot_tokens.split(",") if p.strip())
+            shot_tokens = f"{shot_tokens}, crowd, many people, group of people"
+            if self.extras_style == "faceless":
+                shot_tokens += (", faceless, faceless male, faceless female, "
+                                "featureless faces, blank faces, no facial features, "
+                                "background characters, seen from behind")
+            elif self.extras_style == "silhouette":
+                shot_tokens += (", silhouette, dark silhouettes, backlit figures, "
+                                "featureless shapes, no facial features")
+        parts: list[str] = [shot_tokens]
 
         if self.camera:
             parts.append(self.camera)
@@ -180,7 +243,8 @@ class Panel(BaseModel):
             char = bible.get(ref.id)
             if char is None:
                 continue
-            parts.append(char.appearance_prompt(ref, world=self.world))
+            parts.append(char.appearance_prompt(
+                ref, world=self.world, distance=SHOT_DISTANCE.get(self.shot, "near")))
 
         if self.lighting:
             parts.append(self.lighting)
@@ -220,6 +284,10 @@ class Character(BaseModel):
     # same words placed here fix the composition and leave the face alone.
     framing_hint: str = ""
 
+    # Optional explicit description for far shots. Leave empty and one is
+    # derived from `appearance` by dropping every clause about the face.
+    appearance_far: str = ""
+
     # Trained identity LoRA. This is what actually holds a face together
     # across hundreds of panels; the text description alone will not.
     lora: str | None = None
@@ -230,11 +298,20 @@ class Character(BaseModel):
     sheet_dir: str | None = None
 
     def appearance_prompt(self, ref: CharacterRef | None = None,
-                          world: str = "", include_outfit: bool = True) -> str:
+                          world: str = "", include_outfit: bool = True,
+                          distance: str = "near") -> str:
         parts: list[str] = []
         if self.trigger:
             parts.append(self.trigger)
-        parts.append(self.appearance)
+        # A far shot gets the silhouette, not the face. Emitting a full facial
+        # description into a wide shot is what makes the model ignore the
+        # framing and render a portrait instead.
+        if distance == "far" and self.appearance_far:
+            parts.append(self.appearance_far)
+        elif distance == "far":
+            parts.append(_silhouette(self.appearance))
+        else:
+            parts.append(self.appearance)
         # Explicit per-panel override wins, then the world's wardrobe entry,
         # then the default. Callers that supply their own outfit (the sheet
         # generator cycles the whole wardrobe) pass include_outfit=False,

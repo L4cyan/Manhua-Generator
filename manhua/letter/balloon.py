@@ -18,13 +18,13 @@ from ..models import Balloon
 # `tail` is what separates a balloon from a caption box: speech comes out of a
 # mouth and points at it, narration does not belong to anyone in the panel.
 _STYLES = {
-    "speech":    {"fill": "#FFFFFF", "outline": "#2A1F2E", "radius": 0.42, "dash": False, "tail": True},
-    "thought":   {"fill": "#FFFFFF", "outline": "#2A1F2E", "radius": 0.50, "dash": True,  "tail": False},
-    "narration": {"fill": "#FFF9EC", "outline": "#5A4632", "radius": 0.06, "dash": False, "tail": False},
-    "shout":     {"fill": "#FFFFFF", "outline": "#1A1016", "radius": 0.18, "dash": False, "tail": True},
-    "whisper":   {"fill": "#F7F5FA", "outline": "#6A5F70", "radius": 0.42, "dash": True,  "tail": True},
+    "speech":    {"fill": "#FFFFFF", "outline": "#2A1F2E", "radius": 0.42, "dash": False, "tail": True,  "shape": "oval"},
+    "thought":   {"fill": "#FFFFFF", "outline": "#2A1F2E", "radius": 0.50, "dash": True,  "tail": False, "shape": "oval"},
+    "narration": {"fill": "#FFF9EC", "outline": "#5A4632", "radius": 0.06, "dash": False, "tail": False, "shape": "rect"},
+    "shout":     {"fill": "#FFFFFF", "outline": "#1A1016", "radius": 0.18, "dash": False, "tail": True,  "shape": "rect"},
+    "whisper":   {"fill": "#F7F5FA", "outline": "#6A5F70", "radius": 0.42, "dash": True,  "tail": True,  "shape": "oval"},
     # Cultivation-genre system window.
-    "system":    {"fill": "#0E1A2BE0", "outline": "#5FC7FF", "radius": 0.04, "dash": False, "tail": False},
+    "system":    {"fill": "#0E1A2BE0", "outline": "#5FC7FF", "radius": 0.04, "dash": False, "tail": False, "shape": "rect"},
 }
 
 
@@ -179,6 +179,52 @@ def _wrap(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
     return lines
 
 
+def _wrap_oval(text: str, font: ImageFont.FreeTypeFont, a: float, b: float,
+               line_h: int) -> list[str] | None:
+    """Wrap text to fit inside the ellipse with semi-axes `a` and `b`.
+
+    A speech balloon is an oval, so the usable width is not constant: it is
+    widest across the middle and narrows toward the top and bottom. Wrapping
+    to a rectangle and then drawing an ellipse around it is what forces the
+    ellipse to be ~1.4x bigger than it needs to be in both directions, which
+    is why naive oval balloons swallow the panel. Tapering the lines instead
+    keeps the balloon close to the size of the text.
+
+    Returns None if the text cannot be made to fit, so the caller can grow the
+    ellipse and try again.
+    """
+    words = text.split()
+    if not words:
+        return []
+    n_max = max(1, int((2 * b) // line_h))
+    lines: list[str] = []
+    i = 0
+    for row in range(n_max):
+        if i >= len(words):
+            break
+        # Vertical centre of this line, measured from the ellipse centre, for
+        # a block of `n_max` lines centred vertically.
+        y = -(n_max * line_h) / 2 + (row + 0.5) * line_h
+        inner = 1.0 - (y / b) ** 2
+        if inner <= 0:
+            continue
+        avail = 2 * a * (inner ** 0.5) - 12      # small side bearing
+        if avail <= 0:
+            continue
+        cur = ""
+        while i < len(words):
+            trial = f"{cur} {words[i]}".strip()
+            if font.getbbox(trial)[2] <= avail or not cur:
+                cur = trial
+                i += 1
+            else:
+                break
+        if not cur:
+            return None
+        lines.append(cur)
+    return lines if i >= len(words) else None
+
+
 def draw_balloon(
     img: Image.Image,
     balloon: Balloon,
@@ -199,18 +245,42 @@ def draw_balloon(
     # wide, up to the hard ceiling.
     text = balloon.text.strip()
     line_h = int((font.getbbox("Ay")[3] - font.getbbox("Ay")[1]) * line_spacing)
-    frac = max_width_frac
-    while True:
-        max_text_w = int(img.width * frac) - padding * 2
-        lines = _wrap(text, font, max_text_w)
-        text_w = max((font.getbbox(l)[2] for l in lines), default=0)
-        text_h = line_h * len(lines)
-        if text_h <= text_w * 1.15 or frac >= 0.88:
-            break
-        frac = min(0.88, frac + 0.08)
+    oval = style["shape"] == "oval"
 
-    box_w = text_w + padding * 2
-    box_h = text_h + padding * 2
+    if oval:
+        # Grow an ellipse until the tapered wrap fits inside it. Starting from
+        # the rectangular text size and inflating is what keeps the balloon
+        # close to the size of its text instead of ~1.4x in both directions.
+        flat = _wrap(text, font, int(img.width * max_width_frac) - padding * 2)
+        tw = max((font.getbbox(l)[2] for l in flat), default=10)
+        th = line_h * len(flat)
+        a, b = tw * 0.62 + padding, th * 0.66 + padding
+        lines = None
+        for _ in range(28):
+            lines = _wrap_oval(text, font, a, b, line_h)
+            if lines is not None and a * 2 <= img.width * 0.92:
+                break
+            a *= 1.07
+            b *= 1.05
+        if lines is None:                      # give up gracefully
+            lines, oval = flat, False
+            box_w, box_h = tw + padding * 2, th + padding * 2
+        else:
+            box_w, box_h = int(a * 2), int(b * 2)
+    else:
+        # A long line inside a narrow box becomes a tower that swallows the
+        # panel. Real lettering widens the box instead.
+        frac = max_width_frac
+        while True:
+            max_text_w = int(img.width * frac) - padding * 2
+            lines = _wrap(text, font, max_text_w)
+            text_w = max((font.getbbox(l)[2] for l in lines), default=0)
+            text_h = line_h * len(lines)
+            if text_h <= text_w * 1.15 or frac >= 0.88:
+                break
+            frac = min(0.88, frac + 0.08)
+        box_w = text_w + padding * 2
+        box_h = text_h + padding * 2
 
     # Partial anchors matter for panels with several balloons: pinning y fixes
     # the reading order top-to-bottom, while x is still free to dodge the face.
@@ -237,19 +307,24 @@ def draw_balloon(
     radius = int(min(box_w, box_h) * style["radius"])
     radius = max(6, min(radius, min(box_w, box_h) // 2))
 
+    tail = None
     # Tail first, so the balloon body draws over its base and hides the seam.
     if style["tail"]:
         tail = _tail_points(img, x, y, box_w, box_h, taken)
         if tail:
             od.polygon(tail, fill=style["fill"], outline=style["outline"])
 
-    od.rounded_rectangle(
-        [x, y, x + box_w, y + box_h],
-        radius=radius,
-        fill=style["fill"],
-        outline=style["outline"],
-        width=3,
-    )
+    if oval:
+        od.ellipse([x, y, x + box_w, y + box_h],
+                   fill=style["fill"], outline=style["outline"], width=3)
+    else:
+        od.rounded_rectangle(
+            [x, y, x + box_w, y + box_h],
+            radius=radius,
+            fill=style["fill"],
+            outline=style["outline"],
+            width=3,
+        )
     if style["tail"] and tail:
         # Redraw the two tail edges on top; the rounded rect just covered them.
         od.line([tail[0], tail[1]], fill=style["outline"], width=3)
