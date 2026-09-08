@@ -572,32 +572,58 @@ def create_app(workspace_root: str = "workspace", backend: str = "comfy",
         return vars(worker.submit("rerender", len(targets), run))
 
     @app.post("/api/projects/{pid}/chapters/{n}/scrap")
-    def scrap(ch: Chapter = Depends(get_chapter)) -> dict:
-        """Throw the whole storyboard away and start the chapter over.
+    def scrap(keep_storyboard: bool = True, keep_locked: bool = True,
+              ch: Chapter = Depends(get_chapter)) -> dict:
+        """Throw the rendered art away so the chapter renders again from the top.
 
-        For when the cast or the scenes changed enough that patching panel by
-        panel is worse than re-breaking the prose. The prose itself is kept:
-        it is the thing that was typed by hand.
+        The usual reason is a cast change: the storyboard is still right, the
+        pictures are of the wrong person. So by default the panels, the
+        dialogue, the pacing and the cast all stay exactly as they are and only
+        the images go, which puts every panel back to "not rendered".
 
-        The art is moved aside rather than deleted. A chapter of panels is
-        hours of GPU time and this is a button someone will press by accident.
+        `keep_storyboard=false` also drops the panels, for when the breakdown
+        itself is what needs redoing. The prose survives either way: it is the
+        part that was typed by hand.
+
+        Nothing is deleted. A chapter of art is hours of GPU time and this is a
+        button someone will press by accident, so it moves to a dated folder
+        beside the chapter.
         """
         import shutil
         from datetime import datetime, timezone
 
-        n_panels, n_art = len(ch.panels), 0
+        locked = {p.id for p in ch.panels if ch.stat(p.id).locked} if keep_locked else set()
         src = ch.dir / "panels"
-        moved = ""
-        if src.exists() and any(src.iterdir()):
+        moved, n_art = "", 0
+
+        if src.exists() and any(src.glob("*.png")):
             stamp = f"{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
             dest = ch.dir / f"panels_scrapped_{stamp}"
-            n_art = len(list(src.glob("*.png")))
-            shutil.move(str(src), str(dest))
-            moved = str(dest.resolve())
+            dest.mkdir(parents=True, exist_ok=True)
+            for img in src.glob("*.png"):
+                if img.stem in locked:
+                    continue           # a locked panel is finished; leave it be
+                shutil.move(str(img), str(dest / img.name))
+                n_art += 1
+            moved = str(dest.resolve()) if n_art else ""
+            if not n_art:
+                dest.rmdir()
 
-        ch.panels, ch.status = [], {}
-        ch.save()
-        return {"ok": True, "panels": n_panels, "images": n_art, "moved_to": moved}
+        n_panels = len(ch.panels)
+        with ch.project.edit_chapter(ch.number) as live:
+            if keep_storyboard:
+                for p in live.panels:
+                    if p.id in locked:
+                        continue
+                    st = live.stat(p.id)
+                    st.rendered, st.error = False, None
+            else:
+                live.panels = [p for p in live.panels if p.id in locked]
+                live.status = {k: v for k, v in live.status.items() if k in locked}
+
+        return {"ok": True, "panels": n_panels, "images": n_art,
+                "kept_locked": len(locked), "moved_to": moved,
+                "storyboard_kept": keep_storyboard}
 
     @app.get("/api/projects/{pid}/chapters/{n}/stale")
     def stale(cast_only: bool = True, ch: Chapter = Depends(get_chapter)) -> dict:

@@ -440,8 +440,8 @@ textarea.yaml{min-height:340px}
     <button id="btnRenderAll"><span data-ic="layers"></span>Render all</button>
     <button id="btnRerender" title="Redo panels rendered with an older cast">
       <span data-ic="refresh-cw"></span>Re-render cast</button>
-    <button class="danger" id="btnScrap" title="Throw the storyboard away and start this chapter over">
-      <span data-ic="trash"></span>Scrap panels</button>
+    <button class="danger" id="btnScrap" title="Move the rendered art aside so the chapter renders again from the top">
+      <span data-ic="trash"></span>Scrap renders</button>
     <span id="statusTxt">ready</span>
     <span class="prog"><i id="progBar"></i></span>
   </div>
@@ -2037,27 +2037,33 @@ Roughly ${mins} minute(s) on this card.`)) return;
 /* When the cast or the scenes have moved on far enough that patching panel by
    panel is worse than starting the chapter again. The prose is kept, and the
    art is moved aside rather than deleted. */
+/* Throw the pictures away, keep everything that was decided. The usual reason
+   is a cast change: the storyboard is still right, the art is of the wrong
+   person. */
 $("#btnScrap").onclick=async()=>{
   if(!chapter)return;
-  const n=chapter.panels.length;
-  if(!n){setStatus("this chapter has no panels to scrap");return;}
   const done=chapter.panels.filter(p=>p.rendered).length;
+  if(!done){setStatus("nothing rendered yet, so there is nothing to scrap");return;}
+  const lock=chapter.panels.filter(p=>p.locked&&p.rendered).length;
   if(!confirm(
-    `Scrap all ${n} panel(s) of "${chapter.title||"chapter "+chapter.number}"?
+    `Scrap ${done - lock} rendered image(s) in `+
+    `"${chapter.title||"chapter "+chapter.number}"?
 
 `+
-    `Your prose is kept, and you go straight back to the storyboard step to `+
-    `break it down again with the current cast.
+    `The storyboard, the dialogue and the cast all stay exactly as they are. `+
+    `Every panel goes back to "not rendered" so you can render the whole `+
+    `chapter again with the current cast.
 
 `+
-    (done?`The ${done} rendered image(s) are moved to a dated folder beside the `+
-          `chapter, not deleted.`:"Nothing has been rendered yet."))) return;
+    (lock?`${lock} locked panel(s) are left alone.
+
+`:"")+
+    `The art is moved to a dated folder beside the chapter, not deleted.`)) return;
   try{
     const r=await api(`${base()}/scrap`,{method:"POST"});
     await openChapter(chapter.number); await refreshProject();
-    setStatus(r.images?`scrapped ${r.panels} panels - art kept at ${r.moved_to}`
-                      :`scrapped ${r.panels} panels`,1);
-    openScript();                       // straight back to prose -> cast -> storyboard
+    setStatus(`scrapped ${r.images} image(s), storyboard kept`+
+              (r.moved_to?` - moved to ${r.moved_to}`:""),1);
   }catch(e){setStatus(e.message,null,true);}
 };
 
