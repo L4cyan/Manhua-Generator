@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter
 
 from ..models import Panel, Shot
 
@@ -292,3 +292,56 @@ def matte_on_white(img: Image.Image, tol: int = 34) -> Image.Image:
     out = img.convert("RGBA")
     out.putalpha(alpha)
     return out
+
+
+def harmonise(cut: Image.Image, bg: Image.Image, strength: float = 0.38) -> Image.Image:
+    """Pull a cut-out character's colour toward the scene it is standing in.
+
+    A figure matted off a white studio backdrop and dropped into a night void
+    still looks studio-lit, and that mismatch is the single loudest tell that a
+    panel was composited. Real compositors colour-match; this is the cheap
+    version of the same idea: shift the subject's per-channel mean and spread
+    partway toward the background's.
+
+    `strength` is deliberately well below 1.0 -- matching completely would
+    drain the character's own palette and, in a strongly tinted scene, turn him
+    the colour of the wall.
+    """
+    a = np.asarray(cut.convert("RGBA")).astype(np.float32)
+    rgb, alpha = a[..., :3], a[..., 3:]
+    solid = alpha[..., 0] > 200
+    if not solid.any():
+        return cut
+
+    b = np.asarray(bg.convert("RGB")).astype(np.float32)
+    for c in range(3):
+        src = rgb[..., c][solid]
+        s_mu, s_sd = float(src.mean()), float(src.std()) or 1.0
+        t_mu, t_sd = float(b[..., c].mean()), float(b[..., c].std()) or 1.0
+        # Blend the target statistics rather than adopting them outright.
+        mu = s_mu + (t_mu - s_mu) * strength
+        sd = s_sd + (t_sd - s_sd) * strength * 0.6
+        rgb[..., c] = (rgb[..., c] - s_mu) * (sd / s_sd) + mu
+
+    out = np.concatenate([np.clip(rgb, 0, 255), alpha], axis=2).astype(np.uint8)
+    return Image.fromarray(out, "RGBA")
+
+
+def ground_shadow(bg: Image.Image, cx: float, cy: float, width: int,
+                  opacity: int = 90) -> Image.Image:
+    """Soft contact shadow under the feet.
+
+    Without one a composited figure hovers. This is the cheapest possible fix
+    and it does more for "is this character in the scene" than the colour
+    match does.
+    """
+    layer = Image.new("RGBA", bg.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    w = max(8, int(width * 0.85))
+    h = max(4, int(w * 0.17))
+    x, y = int(cx * bg.width), int(cy * bg.height)
+    d.ellipse([x - w // 2, y - h // 2, x + w // 2, y + h // 2], fill=(0, 0, 0, opacity))
+    layer = layer.filter(ImageFilter.GaussianBlur(max(3, h // 2)))
+    out = bg.convert("RGBA")
+    out.alpha_composite(layer)
+    return out.convert("RGB")
