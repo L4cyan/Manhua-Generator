@@ -355,7 +355,7 @@ textarea.yaml{min-height:340px}
 .pick{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
 .pick button{border-radius:99px;font-size:11.5px;padding:5px 11px}
 .pick button.on{border-color:var(--accent);color:var(--accent);background:var(--accent-dim)}
-.dlgrow{display:grid;grid-template-columns:104px 1fr auto;gap:7px;margin-top:7px;align-items:center}
+.dlgrow{display:grid;grid-template-columns:104px 118px 1fr auto;gap:7px;margin-top:7px;align-items:center}
 .dlgrow select,.dlgrow input{font-size:12px;padding:7px 9px}
 
 /* ---------- about ---------- */
@@ -609,6 +609,19 @@ textarea.yaml{min-height:340px}
     <button id="edSaveOnly"><span data-ic="check"></span>Save</button>
     <button class="primary" id="edSave"><span data-ic="play"></span>Save &amp; re-render</button>
   </div>
+</dialog>
+
+<dialog id="dlgLines" style="max-width:680px">
+  <h3><span data-ic="message"></span>Dialogue
+    <span id="qlId" class="mono" style="color:var(--faint);font-weight:400;font-size:12px"></span>
+    <span class="grow"></span>
+    <button class="ghost" id="qlAdd"><span data-ic="plus"></span>Add line</button></h3>
+  <div class="hint">Kind decides how it is drawn: speech and shout get a tail,
+    narration is a caption box, system is a status window. The speaker is who it
+    belongs to, which is what a tail points at.</div>
+  <div class="body"><div id="qlLines"></div></div>
+  <div class="acts"><button class="ghost" data-close>Cancel</button>
+    <button class="primary" id="qlSave"><span data-ic="check"></span>Save</button></div>
 </dialog>
 
 <dialog id="dlgAsk" style="max-width:440px">
@@ -954,9 +967,11 @@ function panelNode(p,i){
     b.className="ghost icon "+cls; b.title=title; b.innerHTML=svg(ic,"sm");
     b.onclick=e=>{e.stopPropagation();fn();}; return b;
   };
+  const n=(p.dialogue||[]).length;
   tools.append(
     mk(p.rendered?"refresh-cw":"play",p.rendered?"Reroll with a new seed":"Render",
        ()=>renderPanel(p.id,p.rendered)),
+    mk("message",n?`Dialogue (${n} line${n>1?"s":""})`:"Add dialogue",()=>openLines(p)),
     mk("pencil","Edit this panel",()=>openPanel(p)),
     mk(p.locked?"lock":"unlock",p.locked?"Locked, never re-renders":"Lock this panel",
        ()=>toggleLock(p)),
@@ -1700,23 +1715,64 @@ function drawEdCast(){
     host.innerHTML='<div class="hint">No characters in the bible yet.</div>';
 }
 
-function drawEdLines(){
-  const host=$("#edLines"); host.innerHTML="";
-  edLines.forEach((d,i)=>{
+function drawLines(host,lines){
+  host.innerHTML="";
+  lines.forEach((d,i)=>{
     const row=document.createElement("div"); row.className="dlgrow";
     const sel=document.createElement("select"); fillSel(sel,KINDS,d.kind);
     sel.onchange=()=>d.kind=sel.value;
+
+    const who=document.createElement("select");
+    ["",...Object.keys(chapter.characters)].forEach(id=>{
+      const o=document.createElement("option");
+      o.value=id; o.textContent=id?chapter.characters[id].name:"(narrator)";
+      if((d.speaker||"")===id)o.selected=true;
+      who.append(o);
+    });
+    who.onchange=()=>d.speaker=who.value||null;
+
     const txt=document.createElement("input"); txt.value=d.text||"";
-    txt.placeholder=d.kind==="narration"?"narration…":"line…";
+    txt.placeholder="what is said";
     txt.oninput=()=>d.text=txt.value;
+
     const del=document.createElement("button");
-    del.className="ghost icon danger"; del.innerHTML=svg("trash","sm");
-    del.onclick=()=>{edLines.splice(i,1);drawEdLines();};
-    row.append(sel,txt,del); host.append(row);
+    del.className="ghost icon danger"; del.title="Remove this line";
+    del.innerHTML=svg("trash","sm");
+    del.onclick=()=>{lines.splice(i,1);drawLines(host,lines);};
+
+    row.append(sel,who,txt,del); host.append(row);
   });
-  if(!edLines.length) host.innerHTML='<div class="hint">Silent panel. A real beat, used often.</div>';
+  if(!lines.length)
+    host.innerHTML='<div class="hint">Silent panel. A reaction shot with no '+
+      'dialogue gives weight to the line that follows, and is used often.</div>';
 }
+const drawEdLines=()=>drawLines($("#edLines"),edLines);
 $("#edAddLine").onclick=()=>{edLines.push({kind:"speech",speaker:null,text:""});drawEdLines();};
+
+/* The same list, reachable straight off a panel: most dialogue fixes are a
+   wrong `kind` or a missing line, and opening the whole panel editor for that
+   is three clicks too many. */
+let quick=null,quickLines=[];
+function openLines(p){
+  quick=p; quickLines=(p.dialogue||[]).map(d=>({...d}));
+  $("#qlId").textContent=p.id;
+  drawLines($("#qlLines"),quickLines);
+  dlgLines.showModal();
+}
+$("#qlAdd").onclick=()=>{
+  quickLines.push({kind:"speech",speaker:null,text:""});
+  drawLines($("#qlLines"),quickLines);
+  $("#qlLines").lastElementChild?.querySelector("input")?.focus();
+};
+$("#qlSave").onclick=async()=>{
+  dlgLines.close();
+  const lines=quickLines.filter(d=>d.text.trim());
+  quick.dialogue=lines;
+  await api(`${base()}/panels/${quick.id}`,{method:"PATCH",
+    body:JSON.stringify({dialogue:lines})});
+  await reloadPanel(quick.id);
+  setStatus(`${lines.length} line(s) on ${quick.id}`);
+};
 
 async function openPanel(p){
   editing=p;
