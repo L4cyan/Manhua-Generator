@@ -38,3 +38,4 @@ tools/sd-scripts/
 !scripts/lora_qa.py
 !scripts/smoke_studio.py
 !scripts/concurrency_check.py
+!scripts/trash_check.py
