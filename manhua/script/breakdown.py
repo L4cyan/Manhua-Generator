@@ -163,6 +163,54 @@ def story_to_panels(
     )
 
 
+def pace(panels: list[Panel]) -> list[Panel]:
+    """Give the strip a rhythm: gap sizes and panel widths.
+
+    Without this every gap is the same 110px and every panel is the same full
+    width, which reads as a slideshow of identical rectangles no matter how
+    good the art is. Pacing in a vertical scroll IS the panel design: the gap
+    before a panel is how long the reader waits for it, and a narrower panel
+    reads as a smaller, quieter moment.
+
+    Derived from the panels rather than asked of the model, because it follows
+    mechanically from what is already decided (whose beat, what shot, is anyone
+    speaking) and a small model given one more field to fill just fills it
+    randomly.
+    """
+    quiet = {Shot.insert, Shot.extreme_close}
+    close = {Shot.close, Shot.extreme_close, Shot.reaction}
+    wide = {Shot.establishing, Shot.wide}
+
+    for i, p in enumerate(panels):
+        prev = panels[i - 1] if i else None
+
+        if prev is None:
+            p.pause = "normal"
+        elif p.beat != prev.beat:
+            p.pause = "scene"                      # somewhere else, or later
+        elif prev.aspect == "full_bleed":
+            p.pause = "scene"                      # let the big one land first
+        elif p.shot in wide and prev.shot in close:
+            p.pause = "beat"                       # pulling out from a face
+        elif not p.dialogue and prev.dialogue:
+            p.pause = "beat"                       # a silent reaction to a line
+        elif p.dialogue and prev.dialogue:
+            p.pause = "tight"                      # keep a back-and-forth moving
+        else:
+            p.pause = "normal"
+
+        if p.aspect == "full_bleed":
+            p.inset = 0.0
+        elif p.shot in quiet:
+            p.inset = 0.18                         # a detail, not a scene
+        elif p.shot is Shot.reaction and not p.dialogue:
+            p.inset = 0.12
+        else:
+            p.inset = 0.0
+
+    return panels
+
+
 def _to_panels(
     draft: Breakdown,
     *,
@@ -256,4 +304,4 @@ def _to_panels(
             )
         )
 
-    return panels
+    return pace(panels)

@@ -12,6 +12,7 @@ are worth a human glance before hundreds of panels inherit them.
 from __future__ import annotations
 
 import json
+import re
 import textwrap
 
 from pydantic import BaseModel, Field
@@ -49,11 +50,99 @@ SYSTEM = textwrap.dedent(
     - If the prose does not describe someone, INVENT a specific appearance that
       fits the setting and their role. Vagueness is worse than invention: the
       image model will invent anyway, and differently every time.
+    - NEVER hedge. Do not write "not mentioned", "unknown", "likely wears",
+      "presumably", "typical of the setting", or any phrase describing what the
+      text does or does not say. You are writing a costume department's notes,
+      not a report on the source. If you do not know, DECIDE, and write the
+      decision as plain fact.
     - Match the setting. A cultivation story gets robes, not blazers.
     - Do not list the narrator unless they are a character in the scene.
     - Do not invent characters who are not in the passage.
+    - Characters listed as ALREADY ESTABLISHED keep their id. Copy their
+      appearance and outfit back to me unchanged: they have already been drawn
+      that way, and changing the words changes the face.
     """
 ).strip()
+
+# Phrases that mean the model described the SOURCE instead of the character.
+# Any of these in an identity lock and the image model gets a sentence about
+# what a text file does not say, which it then tries to draw.
+_HEDGES = (
+    "not mentioned", "not specified", "not described", "no specific",
+    "unspecified", "unknown", "likely", "presumably", "probably", "typical of",
+    "given the setting", "not stated", "n/a", "none given", "no description",
+    "assumed", "implied", "unclear",
+)
+
+# Fallbacks when the model hedges anyway. Varied so an invented cast does not
+# come out in one uniform, and keyed by id so a character keeps the same one.
+_INVENTED_OUTFITS = [
+    "long cross-collar hanfu robe in muted indigo, wide dark sash knotted at the "
+    "waist, plain cloth boots",
+    "layered grey travelling robe with a high collar, leather belt with a brass "
+    "buckle, worn black boots",
+    "dark green short-sleeved tunic over narrow trousers, cloth wrappings at the "
+    "forearms, straw sandals",
+    "pale cream inner robe under a slate outer coat, fastened with three cord "
+    "toggles down the chest, soft boots",
+    "russet padded jacket closed with a diagonal fastening, black trousers "
+    "tucked into calf-high boots",
+]
+_INVENTED_LOOKS = [
+    "early twenties, lean build, straight black hair tied back at the nape, "
+    "dark brown eyes, pale skin",
+    "late twenties, broad shouldered, short cropped black hair, heavy brows, "
+    "brown eyes, tanned skin",
+    "mid teens, slight build, shoulder-length dark hair worn loose, wide black "
+    "eyes, fair skin",
+    "middle aged, wiry, greying hair pulled into a short topknot, narrow eyes, "
+    "weathered skin, a scar through one eyebrow",
+    "early thirties, average build, chin-length dark hair parted at the side, "
+    "grey eyes, olive skin",
+]
+
+
+def _hedged(text: str) -> bool:
+    t = (text or "").strip().lower()
+    return not t or any(h in t for h in _HEDGES)
+
+
+def _invent(cid: str, kind: str) -> str:
+    """A specific description, chosen deterministically from the id."""
+    pool = _INVENTED_LOOKS if kind == "appearance" else _INVENTED_OUTFITS
+    return pool[sum(map(ord, cid)) % len(pool)]
+
+
+def clean_lock(text: str, cid: str, kind: str) -> tuple[str, str]:
+    """Strip hedging from an identity lock. Returns (text, flag).
+
+    "white robes, likely a symbol of his status within the clan" is half fact
+    and half commentary on the source. Cutting the whole line throws away the
+    white robes, so cut at the hedge and keep what came before it. Only when
+    nothing concrete survives is a description invented outright.
+
+    The flag is "" if the text was already fine, "trimmed" if a hedge was cut
+    off, "thin" if what remained is too little to draw from, or "invented".
+    """
+    t = (text or "").strip()
+    lowered = t.lower()
+    cut = min((i for i in (lowered.find(h) for h in _HEDGES) if i != -1), default=-1)
+    flag = ""
+    if cut != -1:
+        head = t[:cut].rstrip()
+        # Drop the connective that introduced the hedge, so "white robes, but"
+        # does not become "white robes, but".
+        head = re.sub(r"[,;:]?\s*\b(but|though|although|and|however|while)\s*$",
+                      "", head, flags=re.I)
+        t = head.rstrip(" ,;:-")
+        flag = "trimmed"
+
+    if not t:
+        return _invent(cid, kind), "invented"
+    # Two or three words is true but not enough for a model to hold steady on.
+    if len(t) < 16 or len(t.split()) < 3:
+        return t, "thin"
+    return t, flag
 
 
 class DraftCharacter(BaseModel):
@@ -70,17 +159,42 @@ class CastList(BaseModel):
     characters: list[DraftCharacter] = Field(default_factory=list)
 
 
-def cast_from_story(story: str, *, setting: str = "", provider: str | None = None,
-                    model: str | None = None) -> list[tuple[Character, str]]:
-    """Propose bible entries for a chapter. Returns (Character, notes) pairs."""
+def cast_from_story(story: str, *, setting: str = "",
+                    existing: dict[str, Character] | None = None,
+                    provider: str | None = None,
+                    model: str | None = None) -> list[tuple[Character, dict]]:
+    """Propose bible entries for a chapter.
+
+    Returns (Character, info) pairs, where info carries `notes` plus what the
+    editor needs to warn about: whether this entry came from an earlier
+    chapter, and which fields had to be invented because the prose never said.
+
+    `existing` is the project's current bible. Passing it is what stops chapter
+    four giving a character a different face from chapter one: an established
+    character keeps their identity lock verbatim rather than being described
+    afresh from whatever this chapter happens to mention.
+    """
     if provider is None or model is None:
         p, m = providers.detect()
         provider, model = provider or p, model or m
 
+    established = ""
+    if existing:
+        lines = "\n".join(
+            f"- {cid}: {c.name} ({c.sex}) | appearance: {c.appearance} | "
+            f"outfit: {c.default_outfit}"
+            for cid, c in existing.items()
+        )
+        established = (
+            "\nALREADY ESTABLISHED from earlier chapters. If one of these people "
+            "is in this passage, use their exact id and copy their appearance "
+            "and outfit back unchanged:\n" + lines + "\n"
+        )
+
     user = textwrap.dedent(
         f"""
         Setting: {setting or "infer it from the passage"}
-
+        {established}
         Passage:
         ---
         {story.strip()}
@@ -95,7 +209,7 @@ def cast_from_story(story: str, *, setting: str = "", provider: str | None = Non
 
     data = CastList(**(raw if isinstance(raw, dict) else json.loads(raw)))
 
-    out: list[tuple[Character, str]] = []
+    out: list[tuple[Character, dict]] = []
     for d in data.characters:
         cid = "".join(ch if ch.isalnum() else "_" for ch in d.id.lower()).strip("_")
         if not cid:
@@ -104,14 +218,39 @@ def cast_from_story(story: str, *, setting: str = "", provider: str | None = Non
         # lock and a LoRA, extras are crowd assets -- so main and side collapse
         # to "cast" here while the finer label stays in the notes.
         role = "extra" if d.role.lower().startswith("extra") else "cast"
+        appearance, outfit = d.appearance.strip(), d.outfit.strip()
+        invented: list[str] = []
+
+        prior = (existing or {}).get(cid)
+        if prior:
+            # An established character is not re-described. The words in the
+            # bible are what has already been drawn.
+            appearance = prior.appearance
+            outfit = prior.default_outfit
+            role = getattr(prior, "role", role)
+        else:
+            # The prompt forbids hedging, but a small model does it anyway, and
+            # "no specific outfit mentioned, but he likely wears traditional
+            # clothing" is not something an image model can draw. Decide instead.
+            appearance, fa = clean_lock(appearance, cid, "appearance")
+            outfit, fo = clean_lock(outfit, cid, "outfit")
+            if fa:
+                invented.append("appearance")
+            if fo:
+                invented.append("outfit")
+
         char = Character(
             id=cid,
             name=d.name or cid,
             sex="female" if d.sex.lower().startswith("f") else "male",
-            appearance=d.appearance.strip(),
-            default_outfit=d.outfit.strip(),
+            appearance=appearance,
+            default_outfit=outfit,
             role=role,
             sheet_dir=None,
         )
-        out.append((char, f"[{d.role}] {d.notes}".strip()))
+        out.append((char, {
+            "notes": f"[{d.role}] {d.notes}".strip(),
+            "reused": bool(prior),
+            "invented": invented,
+        }))
     return out

@@ -39,3 +39,4 @@ tools/sd-scripts/
 !scripts/smoke_studio.py
 !scripts/concurrency_check.py
 !scripts/trash_check.py
+!scripts/cast_check.py

@@ -99,6 +99,8 @@ label:first-child{margin-top:0}
 .chip{display:inline-flex;align-items:center;gap:5px;background:var(--surface-2);border:1px solid var(--line-2);
       border-radius:99px;padding:3px 9px;font-size:11px;color:var(--dim);white-space:nowrap}
 .chip.on{border-color:var(--accent);color:var(--accent);background:var(--accent-dim)}
+.chip.warn{border-color:var(--warn);color:var(--warn);background:#fbbf2418}
+.cast.made textarea.made{border-color:var(--warn)}
 .grow{flex:1}
 .row{display:flex;gap:10px;align-items:center}
 .mono{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:12px}
@@ -196,7 +198,11 @@ body[data-view="editor"] #setup{display:none}
 /* Nothing to frame yet, so drop the page shadow: an empty rectangle reads
    as a broken render rather than as an invitation. */
 #sheet.bare{box-shadow:none;max-width:none}
-.panel{position:relative;background:var(--surface);animation:fade .35s var(--ease) both}
+.panel{position:relative;background:var(--surface);animation:fade .35s var(--ease) both;
+  margin:0 auto;border:2px solid #141018}
+/* Full bleed ignores the border and the margin and butts against its
+   neighbours, which is how a vertical scroll signals scale. */
+.panel.bleed{border:0;width:100%}
 .panel img{display:block;width:100%;height:auto}
 .panel::after{content:"";position:absolute;inset:0;pointer-events:none;
   box-shadow:0 0 0 0 var(--accent) inset;transition:box-shadow .18s var(--ease)}
@@ -215,7 +221,7 @@ body[data-view="editor"] #setup{display:none}
           text-transform:uppercase;letter-spacing:.9px;font-size:10.5px}
 .ph .cast{color:var(--ink);font-size:12px}
 .ph .said{color:var(--faint);font-style:italic;border-left:2px solid var(--line-2);padding-left:9px}
-.gutter{background:#fff}
+.gutter{background:#fff;height:0}
 
 /* Balloons are drawn by the letterer and baked into the served image, so what
    is on screen is exactly what exports. These are only the handles over them:
@@ -432,6 +438,8 @@ textarea.yaml{min-height:340px}
   <div id="dock">
     <button class="primary" id="btnRender"><span data-ic="play"></span>Render next beat</button>
     <button id="btnRenderAll"><span data-ic="layers"></span>Render all</button>
+    <button id="btnRerender" title="Redo panels rendered with an older cast">
+      <span data-ic="refresh-cw"></span>Re-render cast</button>
     <span id="statusTxt">ready</span>
     <span class="prog"><i id="progBar"></i></span>
   </div>
@@ -720,6 +728,10 @@ const SHOTS=["establishing","wide","full","medium","close","extreme_close","over
 const ASPECTS=["tall","square","wide","banner","full_bleed"];
 const WORLDS=["cultivation","modern","neutral"];
 const KINDS=["speech","thought","narration","shout","whisper","system"];
+// Mirrors compose.strip.PAUSE_GUTTER. The gap before a panel is how long the
+// reader waits for it, so the preview has to show the real one: at a flat 28px
+// the strip looked nothing like the export.
+const PAUSE_GUTTER={tight:40,normal:110,beat:240,scene:480,cliff:760};
 
 const $=s=>document.querySelector(s);
 // A pencil that appears on hover. Double-click still works for people who
@@ -954,8 +966,12 @@ function setLetter(on){
 
 function panelNode(p,i){
   const el=document.createElement("div");
-  el.className="panel"+(p.locked?" locked":"");
+  el.className="panel"+(p.locked?" locked":"")+(p.aspect==="full_bleed"?" bleed":"");
   el.dataset.id=p.id;
+  // Inset pulls a panel in from the sides. Varying the width is what stops a
+  // scroll reading as a stack of identical rectangles.
+  const inset=p.aspect==="full_bleed"?0:Math.min(Math.max(p.inset||0,0),0.45);
+  if(inset) el.style.width=((1-inset)*100)+"%";
 
   if(p.rendered){
     const img=document.createElement("img");
@@ -1023,13 +1039,19 @@ function drawStrip(){
     paintIcons(s);
     return;
   }
-  const g=chapter.canvas?.gutter??28, bgc=chapter.canvas?.background??"#fff";
+  const cw=chapter.canvas?.width??800, bgc=chapter.canvas?.background??"#fff";
+  s.style.background=bgc;
   chapter.panels.forEach((p,i)=>{
     s.append(panelNode(p,i));
     const next=chapter.panels[i+1];
     if(next&&next.aspect!=="full_bleed"){
       const d=document.createElement("div"); d.className="gutter";
-      d.style.height=g+"px"; d.style.background=bgc; s.append(d);
+      // A padding-top percentage resolves against WIDTH, so the gap scales with
+      // the preview exactly as it will in the exported strip, with no resize
+      // handler and no guessing at the display scale.
+      const g=PAUSE_GUTTER[next.pause]??(chapter.canvas?.gutter??28);
+      d.style.paddingTop=(g/cw*100)+"%";
+      d.style.background=bgc; s.append(d);
     }
   });
 }
@@ -1324,9 +1346,14 @@ function castCard(c,i){
       </div>
       <button class="ghost icon" title="Drop this one">${svg("x","sm")}</button>
     </div>
-    <div class="sub">Identity lock ${c.lora?'<span class="chip on" style="margin-left:6px">LoRA</span>':""}</div>
+    <div class="sub">Identity lock
+      ${c.lora?'<span class="chip on" style="margin-left:6px">LoRA</span>':""}
+      ${c.reused?'<span class="chip" style="margin-left:6px">from an earlier chapter</span>':""}
+      ${(c.invented||[]).includes("appearance")
+        ?'<span class="chip warn" style="margin-left:6px">invented</span>':""}</div>
     <textarea class="ap" placeholder="Age, build, hair colour AND cut, eyes, one distinguishing mark. No clothing, no mood.">${esc(c.appearance)}</textarea>
-    <div class="sub">Outfit</div>
+    <div class="sub">Outfit ${(c.invented||[]).includes("outfit")
+      ?'<span class="chip warn" style="margin-left:6px">invented</span>':""}</div>
     <textarea class="of" placeholder="Name the garment, its cut, its colour and its fastening.">${esc(c.default_outfit||"")}</textarea>
     <div class="hint">${esc(c.notes||"")}${c.existing&&!c.notes?" · in the bible":
       c.existing?" · already in the bible, this replaces it":""}</div>`;
@@ -1349,6 +1376,9 @@ function castCard(c,i){
   };
   el.querySelector(".ap").oninput=e=>c.appearance=e.target.value;
   el.querySelector(".of").oninput=e=>c.default_outfit=e.target.value;
+  (c.invented||[]).forEach(f=>
+    el.querySelector(f==="outfit"?".of":".ap")?.classList.add("made"));
+  if((c.invented||[]).length) el.classList.add("made");
   el.querySelectorAll(".toggle button").forEach(b=>b.onclick=()=>{
     c.role=b.dataset.role;
     el.querySelectorAll(".toggle button").forEach(x=>x.classList.toggle("on",x===b));
@@ -1394,6 +1424,14 @@ async function extractCast(ev){
       log.done(flow.cast.length
         ? `${flow.cast.length} characters found: ${flow.cast.map(c=>c.name).join(", ")}`
         : "no characters came back");
+      const back=flow.cast.filter(c=>c.reused).map(c=>c.name);
+      if(back.length) log.note(`kept from earlier chapters: ${back.join(", ")}`);
+      const made=flow.cast.filter(c=>(c.invented||[]).length);
+      if(made.length) log.note(
+        `the chapter never says what ${made.map(c=>
+          `${c.name} (${c.invented.join(" and ")})`).join(", ")} looks like, `+
+        `so one was written in. Marked below: change it now if it is wrong, `+
+        `because every panel they appear in inherits it.`);
     }
   }catch(e){setStatus(e.message,null,true);log.fail(e.message);}
   $("#cRun").disabled=$("#cAgain").disabled=$("#cSave").disabled=false;
@@ -1941,6 +1979,35 @@ $("#edReroll").onclick=async()=>{
 };
 
 /* ---------------------------------------------------------------- dock */
+
+/* Changing a character updates the identity lock, but only for panels rendered
+   after the change. This redoes the ones that came before it. */
+$("#btnRerender").onclick=async()=>{
+  if(!chapter)return;
+  let info;
+  try{ info=await api(`${base()}/stale`); }catch(e){setStatus(e.message,null,true);return;}
+  if(!info.count){
+    setStatus("nothing to re-render: no rendered panels with a cast in them");
+    return;
+  }
+  const mins=Math.max(1,Math.round(info.count*38/60));
+  const lock=info.locked?`
+${info.locked} locked panel(s) will be left alone.`:"";
+  if(!confirm(
+    `Re-render ${info.count} panel(s) with the current cast?
+
+`+
+    `They keep their seeds, so you get the same shots with the corrected `+
+    `characters.${lock}
+
+Roughly ${mins} minute(s) on this card.`)) return;
+  try{
+    const j=await api(`${base()}/rerender`,{method:"POST",
+      body:JSON.stringify({new_seeds:false,cast_only:true})});
+    await pollJob(j.id,"Re-render");
+  }catch(e){setStatus(e.message,null,true);}
+  await openChapter(chapter.number); await refreshProject();
+};
 
 $("#btnRender").onclick=()=>chapter&&renderBeat(false);
 $("#btnRenderAll").onclick=()=>chapter&&renderBeat(true);

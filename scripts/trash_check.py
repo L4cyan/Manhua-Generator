@@ -6,6 +6,7 @@ test rather than a hope.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 import time
@@ -19,7 +20,7 @@ from fastapi.testclient import TestClient
 from manhua.studio.server import create_app
 from manhua.workspace import TRASH_DAYS
 
-ROOT = Path("out/_trash_ws")
+ROOT = Path(f"out/_trash_ws_{os.getpid()}")
 
 
 def main() -> int:

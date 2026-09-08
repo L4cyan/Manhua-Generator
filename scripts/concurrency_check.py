@@ -8,6 +8,7 @@ the chapter raised JSONDecodeError.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 import threading
@@ -18,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from manhua.models import Balloon, Panel
 from manhua.workspace import Workspace
 
-ROOT = Path("out/_conc_ws")
+ROOT = Path(f"out/_conc_ws_{os.getpid()}")
 WRITERS, READERS, ROUNDS = 8, 4, 60
 
 

@@ -164,6 +164,14 @@ class ReviseReq(BaseModel):
     instruction: str
 
 
+class RerenderReq(BaseModel):
+    # A new seed changes the composition as well as the identity. Off by
+    # default: after a cast edit you want to see the SAME shot with the right
+    # character, not a different shot you now have to judge from scratch.
+    new_seeds: bool = False
+    cast_only: bool = True
+
+
 class ExportReq(BaseModel):
     letter: bool = True
     fmt: str = "png"        # png | jpg | webp
@@ -532,6 +540,42 @@ def create_app(workspace_root: str = "workspace", backend: str = "comfy",
 
         return vars(worker.submit("render", 1, run))
 
+    @app.post("/api/projects/{pid}/chapters/{n}/rerender")
+    def rerender(req: RerenderReq, ch: Chapter = Depends(get_chapter)) -> dict:
+        """Re-render panels that were made with an out-of-date character bible.
+
+        The identity lock is read from the bible at render time, so panels
+        rendered AFTER a cast edit are already correct and only the earlier
+        ones are stale. Locked panels are never touched: that is what the lock
+        is for, and a re-render is exactly when you are glad you set it.
+        """
+        targets = [
+            p for p in ch.panels
+            if not ch.stat(p.id).locked
+            and ch.stat(p.id).rendered
+            and (p.characters or not req.cast_only)
+        ]
+        if not targets:
+            raise HTTPException(400, "nothing to re-render (all locked, unrendered, "
+                                     "or without a cast)")
+
+        def run(job: Job) -> None:
+            for i, p in enumerate(targets, 1):
+                job.detail = f"{p.id} ({i} of {len(targets)})"
+                ch.render_panel(p, render_backend, new_seed=req.new_seeds)
+                job.done = i
+
+        return vars(worker.submit("rerender", len(targets), run))
+
+    @app.get("/api/projects/{pid}/chapters/{n}/stale")
+    def stale(cast_only: bool = True, ch: Chapter = Depends(get_chapter)) -> dict:
+        """How many panels a re-render would touch, for the confirmation."""
+        n_locked = sum(1 for p in ch.panels if ch.stat(p.id).locked)
+        n = sum(1 for p in ch.panels
+                if not ch.stat(p.id).locked and ch.stat(p.id).rendered
+                and (p.characters or not cast_only))
+        return {"count": n, "locked": n_locked, "total": len(ch.panels)}
+
     @app.post("/api/projects/{pid}/chapters/{n}/beats/{beat}/render")
     def render_beat(beat: int, only_missing: bool = True,
                     ch: Chapter = Depends(get_chapter)) -> dict:
@@ -615,13 +659,17 @@ def create_app(workspace_root: str = "workspace", backend: str = "comfy",
 
             _, model = providers.detect()
             job.detail = f"{model or 'the local model'} is reading "                          f"{len(req.story.split())} words"
-            pairs = cast_from_story(req.story, setting=req.setting or proj.description)
+            pairs = cast_from_story(
+                req.story,
+                setting=req.setting or proj.description,
+                existing=proj.bible,
+            )
             job.detail = f"writing {len(pairs)} identity locks"
             job.result = {
                 "characters": [
-                    {**c.model_dump(mode="json"), "notes": notes,
+                    {**c.model_dump(mode="json"), **info,
                      "existing": c.id in proj.bible}
-                    for c, notes in pairs
+                    for c, info in pairs
                 ]
             }
             job.done = 1
