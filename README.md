@@ -216,6 +216,9 @@ silently reassigns a line to whoever happens to be in frame.
 **Export** writes the full strip plus upload-sized slices, cut on gutters so a
 panel is never sliced in half. PNG, JPG or WEBP.
 
+Deleting a project or a chapter moves it to the bin rather than removing it:
+a chapter is hours of GPU time, and it stays restorable for 30 days.
+
 ---
 
 ## Workspace layout

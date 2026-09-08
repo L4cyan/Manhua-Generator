@@ -140,6 +140,14 @@ body[data-view="setup"] #rail{width:0;opacity:0;border-right-color:#0000}
 .item.on::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:2px;border-radius:2px;background:var(--accent)}
 .item .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .item small{color:var(--faint);font-size:10.5px;font-variant-numeric:tabular-nums}
+.trow{display:flex;align-items:center;gap:11px;padding:11px 12px;border:1px solid var(--line);
+      border-radius:var(--r);background:var(--surface);margin-top:8px;
+      animation:rise .28s var(--ease) both}
+.trow .ti{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;flex-shrink:0;
+          background:var(--surface-3);color:var(--dim)}
+.trow .tn{flex:1;min-width:0}
+.trow .tn b{font-size:13px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trow .tn small{color:var(--faint);font-size:11px}
 .rail-edit{padding:3px;opacity:0;margin:-3px -4px -3px 0;transition:opacity .14s var(--ease)}
 .item:hover .rail-edit{opacity:.7}
 .rail-edit:hover{opacity:1 !important;background:var(--line-2)}
@@ -393,6 +401,8 @@ textarea.yaml{min-height:340px}
   <div class="rail-foot">
     <div class="item" id="healthRow"><span class="dot" id="health"></span>
       <span class="nm" id="healthTxt">checking…</span></div>
+    <div class="item" id="btnTrash"><span data-ic="trash"></span><span class="nm">Bin</span>
+      <small id="trashN"></small></div>
     <div class="item" id="btnAbout"><span data-ic="info"></span><span class="nm">About</span></div>
   </div>
 </aside>
@@ -613,6 +623,15 @@ textarea.yaml{min-height:340px}
   </div>
 </dialog>
 
+<dialog id="dlgTrash" style="max-width:640px">
+  <h3><span data-ic="trash"></span>Bin
+    <span class="grow"></span>
+    <button class="ghost danger" id="trashEmpty">Empty the bin</button></h3>
+  <div class="hint" id="trashHint"></div>
+  <div class="body"><div id="trashList"></div></div>
+  <div class="acts"><button data-close>Close</button></div>
+</dialog>
+
 <dialog id="dlgLines" style="max-width:680px">
   <h3><span data-ic="message"></span>Dialogue
     <span id="qlId" class="mono" style="color:var(--faint);font-weight:400;font-size:12px"></span>
@@ -705,9 +724,10 @@ const KINDS=["speech","thought","narration","shout","whisper","system"];
 const $=s=>document.querySelector(s);
 // A pencil that appears on hover. Double-click still works for people who
 // expect it, but a hidden gesture is not an affordance on its own.
-function railEdit(fn,title){
+function railEdit(fn,title,icon="pencil"){
   const b=document.createElement("button");
-  b.className="ghost icon rail-edit"; b.title=title; b.innerHTML=svg("pencil","sm");
+  b.className="ghost icon rail-edit"+(icon==="trash"?" danger":"");
+  b.title=title; b.innerHTML=svg(icon,"sm");
   b.onclick=e=>{e.stopPropagation();fn();};
   return b;
 }
@@ -749,7 +769,8 @@ function drawRail(){
     d.title=p.description||p.name;
     d.onclick=()=>openProject(p.id);
     d.ondblclick=e=>{e.stopPropagation();renameProject(p);};
-    d.append(railEdit(()=>renameProject(p),"Rename project"));
+    d.append(railEdit(()=>renameProject(p),"Rename project"),
+             railEdit(()=>deleteProject(p),"Delete project","trash"));
     pl.append(d);
   });
 
@@ -763,7 +784,8 @@ function drawRail(){
                  <small>${c.rendered}/${c.panels}</small>`;
     d.onclick=()=>openChapter(c.number);
     d.ondblclick=e=>{e.stopPropagation();renameChapter(c);};
-    d.append(railEdit(()=>renameChapter(c),"Rename chapter"));
+    d.append(railEdit(()=>renameChapter(c),"Rename chapter"),
+             railEdit(()=>deleteChapter(c),"Delete chapter","trash"));
     cl.append(d);
   });
 }
@@ -1627,6 +1649,86 @@ $("#bSave").onclick=async()=>{
 };
 $("#btnAbout").onclick=()=>dlgAbout.showModal();
 
+/* Deleting a chapter throws away hours of GPU time, so a delete is a move to
+   the bin and stays recoverable for 30 days. */
+async function drawTrash(){
+  const r=await api("/trash");
+  $("#trashN").textContent=r.items.length||"";
+  $("#trashHint").textContent=r.items.length
+    ? `Deleted projects and chapters stay here for ${r.days} days, then go for good.`
+    : "Empty. Deleted projects and chapters land here first.";
+  const host=$("#trashList"); host.innerHTML="";
+  r.items.forEach((it,i)=>{
+    const d=document.createElement("div");
+    d.className="trow"; d.style.animationDelay=(i*30)+"ms";
+    const where=it.kind==="chapter"
+      ? `chapter ${it.chapter} of ${esc(it.project_name||it.project)}`+
+        (it.panels?` · ${it.panels} panels`:"")
+      : "project";
+    d.innerHTML=`<span class="ti">${svg(it.kind==="chapter"?"layers":"book-open","sm")}</span>
+      <span class="tn"><b>${esc(it.name)}</b>
+        <small>${where} · deleted ${it.age_days===0?"today":it.age_days+"d ago"}
+        · goes for good in ${it.purges_in}d</small></span>`;
+    const back=document.createElement("button");
+    back.innerHTML=svg("refresh-cw","sm")+"Restore";
+    back.onclick=async()=>{
+      try{
+        await api(`/trash/${it.id}/restore`,{method:"POST"});
+        setStatus(`restored ${it.name}`,1);
+        await drawTrash(); await refreshProjects();
+        if(proj) try{await openProject(proj.id);}catch{}
+      }catch(e){alert(e.message);}
+    };
+    const gone=document.createElement("button");
+    gone.className="ghost icon danger"; gone.title="Delete permanently";
+    gone.innerHTML=svg("trash","sm");
+    gone.onclick=async()=>{
+      if(!confirm(`Permanently delete "${it.name}"? This cannot be undone.`))return;
+      await api(`/trash/${it.id}`,{method:"DELETE"});
+      await drawTrash();
+    };
+    d.append(back,gone); host.append(d);
+  });
+}
+$("#btnTrash").onclick=async()=>{await drawTrash();dlgTrash.showModal();};
+$("#trashEmpty").onclick=async()=>{
+  const n=(await api("/trash")).items.length;
+  if(!n){setStatus("the bin is already empty");return;}
+  if(!confirm(`Permanently delete ${n} item(s)? This cannot be undone.`))return;
+  await api("/trash",{method:"DELETE"});
+  await drawTrash(); setStatus("bin emptied");
+};
+
+async function deleteChapter(c){
+  if(!confirm(`Delete "${c.title||"Chapter "+c.number}" and its ${c.rendered} `+
+              `rendered panel(s)?
+
+It goes to the bin and can be restored `+
+              `for 30 days.`)) return;
+  await api(`/projects/${proj.id}/chapters/${c.number}`,{method:"DELETE"});
+  tabs=tabs.filter(n=>n!==c.number); saveTabs();
+  if(chapter&&chapter.number===c.number) chapter=null;
+  await refreshProject(); await drawTrash();
+  const next=chaptersDesc()[0];
+  if(!chapter&&next) await openChapter(next.number);
+  else {drawTabs();drawStrip();drawHeader();}
+  setStatus(`"${c.title||"Chapter "+c.number}" moved to the bin`);
+}
+
+async function deleteProject(p){
+  if(!confirm(`Delete the project "${p.name}" and all ${p.chapters.length} `+
+              `of its chapters?
+
+It goes to the bin and can be restored `+
+              `for 30 days.`)) return;
+  await api("/projects/"+p.id,{method:"DELETE"});
+  if(proj&&proj.id===p.id){proj=null;chapter=null;tabs=[];}
+  await refreshProjects(); await drawTrash();
+  if(projects.length) await openProject(projects[0].id);
+  else {view("welcome");drawTabs();drawStrip();drawHeader();}
+  setStatus(`"${p.name}" moved to the bin`);
+}
+
 /* ---------- panel editor ---------- */
 
 let editing=null,edLines=[],edCast=[];
@@ -1907,6 +2009,7 @@ document.addEventListener("keydown",e=>{
     $("#firstRun").onclick=()=>startFlow(["project","story","cast","board"]);
     drawHeader();
   }
+  drawTrash().catch(()=>{});
   setStatus("ready");
 })();
 </script>

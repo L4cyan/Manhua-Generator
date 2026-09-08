@@ -24,7 +24,8 @@ from pydantic import BaseModel
 
 from ..compose.strip import add_credit, compose, export
 from ..models import Balloon, Character, CharacterRef, Panel
-from ..workspace import DEFAULT_STYLE, Chapter, Project, Workspace, make_backend
+from ..workspace import (DEFAULT_STYLE, TRASH_DAYS, Chapter, Project, Workspace,
+                         make_backend)
 
 STATIC = Path(__file__).parent / "static"
 
@@ -307,8 +308,10 @@ def create_app(workspace_root: str = "workspace", backend: str = "comfy",
 
     @app.delete("/api/projects/{pid}")
     def delete_project(pid: str) -> dict:
-        ws.delete_project(pid)
-        return {"ok": True}
+        try:
+            return {"ok": True, "trash_id": ws.delete_project(pid)}
+        except FileNotFoundError:
+            raise HTTPException(404, f"no project '{pid}'")
 
     @app.get("/api/projects/{pid}/bible")
     def read_bible(proj: Project = Depends(get_project)) -> dict:
@@ -347,8 +350,34 @@ def create_app(workspace_root: str = "workspace", backend: str = "comfy",
 
     @app.delete("/api/projects/{pid}/chapters/{n}")
     def delete_chapter(pid: str, n: int) -> dict:
-        get_project(pid).delete_chapter(n)
+        try:
+            return {"ok": True, "trash_id": ws.delete_chapter(pid, n)}
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc))
+
+    # ---------- trash ----------
+
+    @app.get("/api/trash")
+    def read_trash() -> dict:
+        return {"items": ws.list_trash(), "days": TRASH_DAYS}
+
+    @app.post("/api/trash/{tid}/restore")
+    def restore(tid: str) -> dict:
+        try:
+            return {"ok": True, "item": ws.restore_trash(tid)}
+        except FileNotFoundError:
+            raise HTTPException(404, "not in the bin")
+        except FileExistsError as exc:
+            raise HTTPException(409, str(exc))
+
+    @app.delete("/api/trash/{tid}")
+    def purge(tid: str) -> dict:
+        ws.purge_trash(tid)
         return {"ok": True}
+
+    @app.delete("/api/trash")
+    def empty() -> dict:
+        return {"ok": True, "removed": ws.empty_trash()}
 
     # ---------- panels ----------
 

@@ -28,7 +28,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +51,9 @@ SHIPPED_STYLES = {
     "xianxia-premium-webtoon": Path("config/style.yaml"),
 }
 DEFAULT_STYLE = "watercolour"
+
+# How long a deleted project or chapter stays recoverable.
+TRASH_DAYS = 30
 
 
 # One lock per file on disk. The studio saves from several threads at once --
@@ -345,9 +348,9 @@ class Project:
         ch.save()
         return ch
 
-    def delete_chapter(self, number: int) -> None:
-        shutil.rmtree(self.dir / "chapters" / f"{number:03d}", ignore_errors=True)
-        self.touch()
+    def delete_chapter(self, number: int) -> str:
+        """Move this chapter to the bin. Returns its trash id."""
+        return self.ws.delete_chapter(self.id, number)
 
     def summary(self) -> dict:
         chapters = []
@@ -452,6 +455,7 @@ class Workspace:
         return d
 
     def list_projects(self) -> list[Project]:
+        self.expire_trash()
         out = []
         for d in sorted(self.project_dir.iterdir()) if self.project_dir.exists() else []:
             if d.is_dir() and (d / "project.json").exists():
@@ -507,8 +511,106 @@ class Workspace:
         proj.new_chapter("Chapter 1")
         return proj
 
-    def delete_project(self, pid: str) -> None:
-        shutil.rmtree(self.project_dir / pid, ignore_errors=True)
+    # ---------- trash ----------
+    #
+    # Deleting a chapter throws away hours of GPU time, and `rmtree` gives no
+    # second chance for a misclick. Deletes move the folder aside instead, and
+    # the folder is the whole record: restoring is a move back, so there is no
+    # index that can disagree with what is on disk.
+
+    @property
+    def trash_dir(self) -> Path:
+        d = self.root / ".trash"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _to_trash(self, src: Path, meta: dict) -> str:
+        tid = f"{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
+        dest = self.trash_dir / tid
+        dest.mkdir(parents=True)
+        shutil.move(str(src), str(dest / "payload"))
+        save_json(dest / "meta.json", {**meta, "id": tid, "deleted": now()})
+        return tid
+
+    def list_trash(self) -> list[dict]:
+        self.expire_trash()
+        out = []
+        for d in sorted(self.trash_dir.iterdir(), reverse=True):
+            f = d / "meta.json"
+            if not f.is_file():
+                continue
+            try:
+                meta = load_json(f)
+            except Exception:
+                continue
+            deleted = datetime.fromisoformat(meta["deleted"])
+            age = (datetime.now(timezone.utc) - deleted).days
+            out.append({**meta, "age_days": age, "purges_in": max(0, TRASH_DAYS - age)})
+        return out
+
+    def restore_trash(self, tid: str) -> dict:
+        d = self.trash_dir / tid
+        meta = load_json(d / "meta.json")
+        target = self.root / meta["path"]
+        if target.exists():
+            raise FileExistsError(
+                f"{meta['name']} is back already; rename or remove it first")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(d / "payload"), str(target))
+        shutil.rmtree(d, ignore_errors=True)
+        return meta
+
+    def purge_trash(self, tid: str) -> None:
+        shutil.rmtree(self.trash_dir / tid, ignore_errors=True)
+
+    def empty_trash(self) -> int:
+        items = list(self.trash_dir.iterdir())
+        for d in items:
+            shutil.rmtree(d, ignore_errors=True)
+        return len(items)
+
+    def expire_trash(self) -> int:
+        """Drop anything past its 30 days. Cheap, so it runs on every listing."""
+        gone = 0
+        cutoff = datetime.now(timezone.utc) - timedelta(days=TRASH_DAYS)
+        for d in self.trash_dir.iterdir():
+            f = d / "meta.json"
+            try:
+                if datetime.fromisoformat(load_json(f)["deleted"]) < cutoff:
+                    shutil.rmtree(d, ignore_errors=True)
+                    gone += 1
+            except Exception:
+                continue
+        return gone
+
+    def delete_project(self, pid: str) -> str:
+        src = self.project_dir / pid
+        if not src.exists():
+            raise FileNotFoundError(pid)
+        name = pid
+        try:
+            name = self.load_project(pid).name
+        except Exception:
+            pass
+        return self._to_trash(src, {
+            "kind": "project", "name": name, "project": pid,
+            "path": str(Path("projects") / pid),
+        })
+
+    def delete_chapter(self, pid: str, number: int) -> str:
+        proj = self.load_project(pid)
+        src = proj.dir / "chapters" / f"{number:03d}"
+        if not src.exists():
+            raise FileNotFoundError(f"chapter {number}")
+        ch = proj.chapter(number)
+        tid = self._to_trash(src, {
+            "kind": "chapter", "name": ch.title or f"Chapter {number}",
+            "project": pid, "project_name": proj.name, "chapter": number,
+            "panels": len(ch.panels),
+            "path": str(Path("projects") / pid / "chapters" / f"{number:03d}"),
+        })
+        proj.touch()
+        return tid
 
 
 def make_backend(kind: str = "auto", host: str = "127.0.0.1:8188") -> Backend:
