@@ -33,6 +33,7 @@ tools/sd-scripts/
 !scripts/hairline_ab.py
 !scripts/contact_sheet.py
 !scripts/render_style.py
+!scripts/render_chapter.py
 !scripts/build_strip.py
 !scripts/fetch_turbo.py
 !scripts/lora_qa.py
