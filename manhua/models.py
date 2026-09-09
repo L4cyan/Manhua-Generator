@@ -109,8 +109,14 @@ SHOT_DISTANCE: dict[Shot, str] = {
     Shot.establishing: "far",
     Shot.wide: "far",
     Shot.full: "far",
-    Shot.medium: "far",
-    Shot.over_shoulder: "far",
+    # A medium shot is framed from the knees up and an over-the-shoulder is at
+    # conversational distance: in both, the face is right there and is most of
+    # what the reader is looking at. These were "far", which dropped the entire
+    # face description from the prompt, and since medium is the commonest shot
+    # in a chapter it meant most panels were drawn from hair and clothing
+    # alone. That is exactly as much identity as it sounds like.
+    Shot.medium: "near",
+    Shot.over_shoulder: "near",
     Shot.pov: "far",
     Shot.close: "near",
     Shot.extreme_close: "near",
@@ -158,8 +164,10 @@ def _emphasise(text: str, weight: float, hair_only: bool = False) -> str:
     if not hair_only:
         return wrap(text)
 
+    # Split on sentence ends as well as commas, or a weight group straddles a
+    # full stop and drags an unrelated sentence in with the hair.
     out = []
-    for clause in text.split(","):
+    for clause in re.split(r"(?<=[.;])\s+|,", text):
         c = clause.strip()
         if not c:
             continue
@@ -178,7 +186,10 @@ class CharacterRef(BaseModel):
     """A character appearing in one panel."""
 
     id: str = Field(description="Key into the character bible, e.g. 'lin_yao'")
-    expression: str = Field(default="neutral", description="e.g. 'cold smirk', 'wide-eyed shock'")
+    # Empty, not "neutral". The default was emitted into every prompt as
+    # "neutral expression", on all 41 panels of a chapter, which is both a
+    # waste of attention and an instruction to make the face do nothing.
+    expression: str = Field(default="", description="e.g. 'cold smirk', 'wide-eyed shock'")
     pose: str = Field(default="", description="e.g. 'arms crossed, standing on cliff edge'")
     gaze: str = Field(default="", description="e.g. 'looking at viewer', 'eyes downcast'")
     # Overrides the bible default when a scene changes their outfit.
@@ -466,7 +477,11 @@ class Character(BaseModel):
                 # just as fast as one with the wrong face.
                 parts.append(_emphasise(outfit, self.emphasis))
         if ref:
-            if ref.expression:
+            # "neutral" is not an expression, it is the absence of one, and
+            # saying so out loud spends attention telling the model to do
+            # nothing with the face.
+            if ref.expression and ref.expression.strip().lower() not in (
+                    "neutral", "none", "normal", "calm expression"):
                 parts.append(f"{ref.expression} expression")
             if ref.pose:
                 parts.append(ref.pose)

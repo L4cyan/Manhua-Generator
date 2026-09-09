@@ -38,26 +38,21 @@ SYSTEM = textwrap.dedent(
 
       THE HAIR IS THE MOST IMPORTANT PART OF THIS FIELD. It is what a reader
       recognises a character by at a glance, and it is the first thing to go
-      wrong. Give all five of: length, colour, texture, how it is worn or
-      tied, and what the front does. "long black hair, straight and heavy,
-      worn loose down the back, parted in the centre with a long sidelock
-      falling past the jaw on each side" -- not "long black hair".
+      wrong. Give all five of: its length, its colour, its texture, how it is
+      worn or tied, and what the front does. Five words is not enough; a line
+      is about right.
 
       Then age, build, height, skin tone, eye colour and shape, and one
-      distinguishing mark.
+      distinguishing mark that is theirs alone.
+
+      Write it as ONE flowing list of comma-separated clauses, the way an
+      artist briefs another artist. Never use "Label: value" form: a form is a
+      thing to fill in, and this is a thing to draw from.
 
     - `outfit`: BUILD A COSTUME, do not summarise one. Work outward: the inner
       garment, then the outer, then the belt or sash, then the footwear, then
       one accessory. For each, name the garment, its cut, its colour, and how
-      it fastens. Include at least one detail nobody else would have: a
-      pattern, an embroidery motif, a mismatched sleeve, a worn patch, a
-      pendant.
-
-      "black inner robe with a high stiff collar, over it a charcoal
-      cross-collar outer robe embroidered at the hem with silver cloud
-      scrollwork, closed left over right and bound with a wide indigo sash
-      knotted at the left hip, calf-high black boots, a jade ring on a cord at
-      the throat" -- not "black robes".
+      it fastens. Add one detail nobody else in the story has.
 
       A vague outfit is the single biggest cause of a character appearing in a
       suit in one panel and a robe in the next.
@@ -73,6 +68,15 @@ SYSTEM = textwrap.dedent(
       text does or does not say. You are writing a costume department's notes,
       not a report on the source. If you do not know, DECIDE, and write the
       decision as plain fact.
+    - EVERY CHARACTER MUST LOOK DIFFERENT FROM EVERY OTHER CHARACTER. No two
+      of them share a hair colour, a hairstyle, a garment, a colour scheme or
+      an age. Write each description while looking at the ones you have already
+      written, and if two would read alike on the page, change one of them. A
+      cast where everybody wears the same robe is a failed answer, and it is
+      the single most common way this goes wrong.
+    - Rank matters and shows. A clan heir, a servant and a beaten outcast do
+      not wear the same cloth: silk and embroidery at the top, coarse undyed
+      hemp at the bottom.
     - Match the setting. A cultivation story gets robes, not blazers.
     - Do not list the narrator unless they are a character in the scene.
     - Do not invent characters who are not in the passage.
@@ -131,6 +135,74 @@ def _invent(cid: str, kind: str) -> str:
     return pool[sum(map(ord, cid)) % len(pool)]
 
 
+# "Age: 16. Build: Slim. Eye colour: Dark brown." is a form, and a form is a
+# thing to fill in rather than a thing to draw from. It also breaks the two
+# places that read an appearance as a list of clauses: the far-shot silhouette,
+# which drops clauses about the face, and the hair weighting.
+_LABELS: tuple[tuple[str, str], ...] = (
+    (r"age", "{} years old"),
+    (r"build|physique", "{} build"),
+    (r"height", "{} tall"),
+    (r"eye colou?r", "{} eyes"),
+    (r"eye shape", "{} eyes"),
+    (r"hair colou?r", "{} hair"),
+    # Non-capturing throughout: a capture group here shifts the value out of
+    # group 1, and "One distinguishing mark: a small scar" came back as "one".
+    (r"skin(?: tone)?", "{} skin"),
+    (r"(?:one )?distinguishing (?:mark|feature)s?", "{}"),
+    (r"gender|sex", ""),
+)
+
+
+def tidy_labels(text: str) -> str:
+    """Turn "Label: value" writing into ordinary comma-separated clauses."""
+    if ":" not in text:
+        return text
+    out = text
+    for pattern, shape in _LABELS:
+        out = re.sub(
+            rf"\b(?:{pattern})\s*:\s*([^.;,]+)[.;,]?",
+            lambda m, sh=shape: (sh.format(m.group(1).strip().rstrip(".").lower()) + ", ")
+            if sh else "",
+            out, flags=re.I)
+    # Sentences become clauses, so the whole thing reads as one list.
+    out = re.sub(r"\.\s+(?=[a-z0-9])", ", ", out)
+    out = re.sub(r"\.\s+(?=[A-Z])", ", ", out)
+    out = re.sub(r",\s*,", ", ", out)
+    out = re.sub(r"\s{2,}", " ", out).strip(" ,.")
+    return out
+
+
+def _overlap(a: str, b: str) -> float:
+    """How much two descriptions share, ignoring filler."""
+    stop = {"a", "an", "the", "and", "with", "of", "in", "on", "at", "over",
+            "under", "his", "her", "their", "it", "is", "to", "from", "by"}
+    wa = {w for w in re.findall(r"[a-z]{3,}", a.lower())} - stop
+    wb = {w for w in re.findall(r"[a-z]{3,}", b.lower())} - stop
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / min(len(wa), len(wb))
+
+
+def find_clones(chars: list[tuple[Character, dict]], threshold: float = 0.6
+                ) -> list[tuple[str, str, str]]:
+    """Characters whose descriptions are near-copies of each other.
+
+    The prompt used to carry a worked example of a good costume, and the model
+    dressed the entire cast in it: a clan heir, a beaten outcast and a servant
+    all in the same charcoal robe with silver cloud scrollwork. The example is
+    gone, but a model that copies its first answer onto the rest is a failure
+    mode worth detecting rather than trusting a prompt about.
+    """
+    out = []
+    for i, (a, _) in enumerate(chars):
+        for b, _ in chars[i + 1:]:
+            for field, label in (("appearance", "look"), ("default_outfit", "outfit")):
+                if _overlap(getattr(a, field), getattr(b, field)) >= threshold:
+                    out.append((a.id, b.id, label))
+    return out
+
+
 def clean_lock(text: str, cid: str, kind: str) -> tuple[str, str]:
     """Strip hedging from an identity lock. Returns (text, flag).
 
@@ -142,7 +214,7 @@ def clean_lock(text: str, cid: str, kind: str) -> tuple[str, str]:
     The flag is "" if the text was already fine, "trimmed" if a hedge was cut
     off, "thin" if what remained is too little to draw from, or "invented".
     """
-    t = (text or "").strip()
+    t = tidy_labels((text or "").strip())
     lowered = t.lower()
     cut = min((i for i in (lowered.find(h) for h in _HEDGES) if i != -1), default=-1)
     flag = ""

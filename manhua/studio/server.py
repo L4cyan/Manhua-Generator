@@ -707,7 +707,7 @@ def create_app(workspace_root: str = "workspace", backend: str = "comfy",
         every prompt this character appears in inherits verbatim, so it is
         worth a human glance before hundreds of panels are built on it.
         """
-        from ..script.cast import cast_from_story
+        from ..script.cast import cast_from_story, find_clones
 
         if not req.story.strip():
             raise HTTPException(400, "paste the chapter first")
@@ -723,7 +723,13 @@ def create_app(workspace_root: str = "workspace", backend: str = "comfy",
                 existing=proj.bible,
             )
             job.detail = f"writing {len(pairs)} identity locks"
+            clones = find_clones(pairs)
+            for a_, b_, field in clones:
+                for ch_, info in pairs:
+                    if ch_.id == b_:
+                        info.setdefault("clash", []).append(f"{field} of {a_}")
             job.result = {
+                "clones": [{"a": a_, "b": b_, "field": f} for a_, b_, f in clones],
                 "characters": [
                     {**c.model_dump(mode="json"), **info,
                      "existing": c.id in proj.bible}

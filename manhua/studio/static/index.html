@@ -1375,7 +1375,11 @@ function castCard(c,i){
       ${c.lora?'<span class="chip on" style="margin-left:6px">LoRA</span>':""}
       ${c.reused?'<span class="chip" style="margin-left:6px">from an earlier chapter</span>':""}
       ${(c.invented||[]).includes("appearance")
-        ?'<span class="chip warn" style="margin-left:6px">invented</span>':""}</div>
+        ?'<span class="chip warn" style="margin-left:6px">invented</span>':""}
+      ${(c.clash||[]).length
+        ?`<span class="chip warn" style="margin-left:6px" title="Two characters `+
+         `who read alike on the page will be drawn alike">too close to `+
+         `${esc(c.clash.join(", "))}</span>`:""}</div>
     <textarea class="ap" placeholder="Age, build, hair colour AND cut, eyes, one distinguishing mark. No clothing, no mood.">${esc(c.appearance)}</textarea>
     <div class="sub">Outfit ${(c.invented||[]).includes("outfit")
       ?'<span class="chip warn" style="margin-left:6px">invented</span>':""}</div>
@@ -1476,9 +1480,11 @@ $("#cSave").onclick=async()=>{
   const btn=$("#cSave"); btn.disabled=true;
   try{
     const r=await api(`/projects/${proj.id}/cast/commit`,{method:"POST",
-      body:JSON.stringify({characters:keep.map(c=>({
-        id:c.id,name:c.name,sex:c.sex,role:c.role==="extra"?"extra":"cast",
-        appearance:c.appearance,default_outfit:c.default_outfit||""}))})});
+      body:JSON.stringify({characters:keep.map(c=>{
+        const {use, existing, notes, invented, reused, ...rest} = c;
+        return {...rest, role:c.role==="extra"?"extra":"cast",
+                default_outfit:c.default_outfit||""};
+      })})});
     setStatus(`bible saved: ${r.characters} characters`,1);
     await refreshProject();
     goStep(flow.at+1);
@@ -1690,9 +1696,13 @@ $("#castSave").onclick=async()=>{
     let id=(c.id||slug(c.name)).trim();
     while(seen.has(id)) id+="_2";        // two characters, one name
     seen.add(id);
-    payload.push({id,name:c.name.trim(),sex:c.sex||"male",
+    // Spread the whole character, then override what the form edits. Listing
+    // fields by hand meant everything the UI does not show -- the LoRA, the
+    // trigger word, the prompt weighting -- was silently dropped on save.
+    const {use, existing, notes, invented, reused, ...rest} = c;
+    payload.push({...rest, id, name:c.name.trim(), sex:c.sex||"male",
       role:c.role==="extra"?"extra":"cast",
-      appearance:c.appearance||"",default_outfit:c.default_outfit||""});
+      appearance:c.appearance||"", default_outfit:c.default_outfit||""});
   }
   try{
     const r=await api(`/projects/${proj.id}/cast/commit`,{method:"POST",
